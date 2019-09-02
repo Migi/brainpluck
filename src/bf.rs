@@ -172,9 +172,6 @@ impl BfState {
                     self.run_ops(ops, reader, writer)?;
                 }
             },
-            BfOp::Block(ops) => {
-				self.run_ops(ops, reader, writer)?;
-            }
         }
         Ok(())
     }
@@ -185,4 +182,40 @@ impl BfState {
         }
         Ok(())
     }
+}
+
+pub fn ops2str(ops: &Vec<BfOp>) -> String {
+	fn rec(ops: &Vec<BfOp>, result: &mut String) {
+		for op in ops {
+			match op {
+				BfOp::Left => {
+					*result += "<";
+				},
+				BfOp::Right => {
+					*result += ">";
+				},
+				BfOp::Inc => {
+					*result += "+";
+				},
+				BfOp::Dec => {
+					*result += "-";
+				},
+				BfOp::In => {
+					*result += ",";
+				},
+				BfOp::Out => {
+					*result += ".";
+				},
+				BfOp::Loop(ops) => {
+					*result += "[";
+					rec(ops, result);
+					*result += "]";
+				},
+			}
+		}
+	}
+
+	let mut result = String::new();
+	rec(ops, &mut result);
+	result
 }

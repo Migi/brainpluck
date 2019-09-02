@@ -41,7 +41,13 @@ fn main() {
     tracks.insert(TrackId::Scratch1, TrackKind::Scratch( ScratchTrack { track: Track { track_num: 1 }}));
     tracks.insert(TrackId::Scratch2, TrackKind::Scratch( ScratchTrack { track: Track { track_num: 2 }}));
     let mut cpu = Cpu::new(&mut tracks);
-    cpu.add_const_to_byte(Pos { track: 0, frame: 0 }, 14);
+    cpu.add_const_to_byte(Pos { track: 0, frame: 0 }, 234);
+    cpu.moveprint_byte(Pos { track: 0, frame: 0 }, ScratchTrack { track: Track { track_num: 1 }}, ScratchTrack { track: Track { track_num: 2 }});
+    let ops = lir2bf(cpu.into_ops());
+    println!("{}", ops2str(&ops));
+    
+    let mut state = BfState::new();
+    state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
 }
 
 #[cfg(test)]

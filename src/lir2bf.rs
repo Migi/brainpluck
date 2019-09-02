@@ -11,7 +11,7 @@ pub fn lir2bf(ops: Vec<Lir>) -> Vec<BfOp> {
 			Lir::Dec => { result.push(BfOp::Dec); },
 			Lir::In => { result.push(BfOp::In); },
 			Lir::Out => { result.push(BfOp::Out); },
-			Lir::Loop(ops) => { result.push(BfOp::Loop(lir2bf(ops)); },
+			Lir::Loop(ops) => { result.push(BfOp::Loop(lir2bf(ops))); },
 		}
 	}
 	result

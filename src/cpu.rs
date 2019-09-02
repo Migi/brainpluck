@@ -8,14 +8,12 @@ pub enum Lir {
     In,
     Out,
     Loop(Vec<Lir>),
-	Block(Vec<Lir>),
-	Shifted(isize, Vec<Lir>),
 }
 
 #[derive(Eq,PartialEq,Copy,Clone)]
 pub struct Pos {
-	frame: isize,
-	track: isize
+	pub frame: isize,
+	pub track: isize
 }
 
 impl Pos {
@@ -42,7 +40,7 @@ pub enum TrackId {
 
 #[derive(Clone,Copy,Eq,PartialEq)]
 pub struct Track {
-	track_num: isize,
+	pub track_num: isize,
 }
 
 impl Track {
@@ -56,8 +54,8 @@ impl Track {
 
 #[derive(Clone,Copy)]
 pub struct Register {
-	track: Track,
-	size: isize,
+	pub track: Track,
+	pub size: isize,
 }
 
 impl Register {
@@ -68,7 +66,7 @@ impl Register {
 
 #[derive(Clone,Copy,Eq,PartialEq)]
 pub struct ScratchTrack {
-	track: Track
+	pub track: Track
 }
 
 impl ScratchTrack {
@@ -122,6 +120,10 @@ impl<'c> Cpu<'c> {
 			cpu.lir.push(Lir::Right);
 		}
 		cpu
+	}
+
+	pub fn into_ops(self) -> Vec<Lir> {
+		self.lir
 	}
 
 	pub fn inc(&mut self) {
@@ -287,6 +289,12 @@ impl<'c> Cpu<'c> {
 
 	pub fn zero_byte(&mut self, pos: Pos) {
 		self.loop_while(pos, |cpu| {
+			cpu.dec();
+		});
+	}
+
+	pub fn clr(&mut self) {
+		self.raw_loop(|cpu| {
 			cpu.dec();
 		});
 	}
@@ -524,6 +532,7 @@ impl<'c> Cpu<'c> {
 		// - 0: divisor (kind of)
 		// - 1: remainder
 		// - 2: always 0
+		// - 3: always 0
 		assert_ne!(divisor, 0);
 		assert_ne!(divisor, 1);
 		self.add_const_to_byte(scratch_track.at(0), divisor-1);
@@ -535,23 +544,24 @@ impl<'c> Cpu<'c> {
 				assert_eq!(cpu.cur_frame, Some(0));
 				cpu.dec();
 				cpu.inc_at(scratch_track.at(1));
+				cpu.goto(scratch_track.at(2));
 			});
-			assert!(cpu.cur_frame.is_none()); // could be 0 or 1
-			cpu.shift_frame_untracked(1); // we're at 1 or 2
+			assert!(cpu.cur_frame.is_none()); // could be 0 or 2
+			cpu.shift_frame_untracked(1); // we're at 1 or 3
 			cpu.raw_loop(|cpu| {
 				// we must be at 1, divisor == 0, remainder > 0
 				cpu.cur_frame = Some(1);
 				cpu.moveadd_byte(scratch_track.at(1), scratch_track.at(0));
 				cpu.inc_at(div_result);
-				cpu.goto(scratch_track.at(2));
+				cpu.goto(scratch_track.at(3));
 			});
-			cpu.cur_frame = Some(2);
+			cpu.cur_frame = Some(3);
 		});
 		self.moveadd_byte(scratch_track.at(1), rem_result);
 		self.zero_byte(scratch_track.at(0));
 	}
 
-	pub fn print_byte(&mut self, pos: Pos, result_scratch_track: ScratchTrack, division_internal_scratch_track: ScratchTrack) {
+	pub fn moveprint_byte(&mut self, pos: Pos, result_scratch_track: ScratchTrack, division_internal_scratch_track: ScratchTrack) {
 		let singles = result_scratch_track.at(0);
 		let temp = result_scratch_track.at(1);
 		let tens = result_scratch_track.at(2);
@@ -560,10 +570,13 @@ impl<'c> Cpu<'c> {
 		self.movediv_byte_onto_zeros(temp, 10, hundreds, tens, division_internal_scratch_track);
 		self.add_const_to_byte(hundreds, 48);
 		self.out();
+		self.clr();
 		self.add_const_to_byte(tens, 48);
 		self.out();
+		self.clr();
 		self.add_const_to_byte(singles, 48);
 		self.out();
+		self.clr();
 	}
 
 	/*/// b -= a
