@@ -4,15 +4,16 @@ mod bf;
 mod lir2bf;
 
 extern crate nom;
-extern crate num_bigint;
-extern crate num_traits;
+extern crate num;
 
 use std::fmt::Debug;
+use std::collections::HashMap;
+use num::BigUint;
+
 use crate::bf::*;
 use crate::hir::*;
 use crate::cpu::*;
 use crate::lir2bf::*;
-use std::collections::HashMap;
 
 fn print_err<T>(e: impl Debug) -> T {
     panic!("Error: {:?}", e)
@@ -35,19 +36,63 @@ fn mainb() {
     println!("{:?}", parse_hir("test(foo(), 7)"));
 }
 
-fn main() {
-    let mut tracks = HashMap::new();
-    tracks.insert(TrackId::Heap, TrackKind::Data( Track { track_num: 0 }));
-    tracks.insert(TrackId::Scratch1, TrackKind::Scratch( ScratchTrack { track: Track { track_num: 1 }}));
-    tracks.insert(TrackId::Scratch2, TrackKind::Scratch( ScratchTrack { track: Track { track_num: 2 }}));
-    let mut cpu = Cpu::new(&mut tracks);
-    cpu.add_const_to_byte(Pos { track: 0, frame: 0 }, 234);
-    cpu.moveprint_byte(Pos { track: 0, frame: 0 }, ScratchTrack { track: Track { track_num: 1 }}, ScratchTrack { track: Track { track_num: 2 }});
+#[allow(unused)]
+fn mainc() {
+    let mut cfg = CpuConfig::new();
+    let data = cfg.add_data_track(TrackId::Heap);
+    let scratch1 = cfg.add_scratch_track(TrackId::Scratch1);
+    let scratch2 = cfg.add_scratch_track(TrackId::Scratch2);
+    let mut cpu = Cpu::new(&cfg);
+
+    cpu.add_const_to_byte(data.at(0), 234);
+    cpu.moveprint_byte(data.at(0), scratch1, scratch2);
+
     let ops = lir2bf(cpu.into_ops());
     println!("{}", ops2str(&ops));
-    
     let mut state = BfState::new();
     state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
+}
+
+#[allow(unused)]
+fn maind() {
+    let mut cfg = CpuConfig::new();
+    let register = cfg.add_register_track(TrackId::Register1, 4);
+    let scratch1 = cfg.add_scratch_track(TrackId::Scratch1);
+    let scratch2 = cfg.add_scratch_track(TrackId::Scratch2);
+    let mut cpu = Cpu::new(&cfg);
+
+    cpu.add_const_to_register(register, BigUint::from(123456u64));
+    cpu.moveprint_byte(register.at(0), scratch1, scratch2);
+    cpu.print_text(", ", scratch1);
+    cpu.moveprint_byte(register.at(1), scratch1, scratch2);
+    cpu.print_text(", ", scratch1);
+    cpu.moveprint_byte(register.at(2), scratch1, scratch2);
+    cpu.print_text(", ", scratch1);
+    cpu.moveprint_byte(register.at(3), scratch1, scratch2);
+
+    let ops = lir2bf(cpu.into_ops());
+    println!("{}", ops2str(&ops));
+    let mut state = BfState::new();
+    state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
+}
+
+fn main() {
+    let mut cfg = CpuConfig::new();
+    let register = cfg.add_register_track(TrackId::Register1, 4);
+    let scratch1 = cfg.add_scratch_track(TrackId::Scratch1);
+    let scratch2 = cfg.add_scratch_track(TrackId::Scratch2);
+    let scratch3 = cfg.add_scratch_track(TrackId::Scratch3);
+    let mut cpu = Cpu::new(&cfg);
+
+    cpu.add_const_to_register(register, BigUint::from(123456u64));
+    cpu.moveprint_register_hex(register, scratch1, scratch2, scratch3);
+
+    let ops = lir2bf(cpu.into_ops());
+    println!("{}", ops2str(&ops));
+    let mut state = BfState::new();
+    state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
+
+    // should print 0x0001E240
 }
 
 #[cfg(test)]

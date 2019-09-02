@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use num::BigUint;
+use num::Integer;
+use num::Zero;
 
 pub enum Lir {
     Left,
@@ -35,7 +38,9 @@ pub enum TrackId {
 	Heap,
 	Scratch1,
 	Scratch2,
+	Scratch3,
 	CurDataPtr,
+	Register1,
 }
 
 #[derive(Clone,Copy,Eq,PartialEq)]
@@ -44,7 +49,7 @@ pub struct Track {
 }
 
 impl Track {
-	fn at(&self, frame: isize) -> Pos {
+	pub fn at(&self, frame: isize) -> Pos {
 		Pos {
 			frame,
 			track: self.track_num,
@@ -59,7 +64,7 @@ pub struct Register {
 }
 
 impl Register {
-	fn at(&self, frame: isize) -> Pos {
+	pub fn at(&self, frame: isize) -> Pos {
 		self.track.at(frame)
 	}
 }
@@ -70,8 +75,42 @@ pub struct ScratchTrack {
 }
 
 impl ScratchTrack {
-	fn at(&self, frame: isize) -> Pos {
+	pub fn at(&self, frame: isize) -> Pos {
 		self.track.at(frame)
+	}
+	
+	#[allow(unused)]
+	pub fn get_1_pos(&self, start: isize) -> [Pos; 1] {
+		[
+			self.at(start)
+		]
+	}
+
+	#[allow(unused)]
+	pub fn get_2_pos(&self, start: isize) -> [Pos; 2] {
+		[
+			self.at(start),
+			self.at(start+1)
+		]
+	}
+
+	#[allow(unused)]
+	pub fn get_3_pos(&self, start: isize) -> [Pos; 3] {
+		[
+			self.at(start),
+			self.at(start+1),
+			self.at(start+2)
+		]
+	}
+
+	#[allow(unused)]
+	pub fn get_4_pos(&self, start: isize) -> [Pos; 4] {
+		[
+			self.at(start),
+			self.at(start+1),
+			self.at(start+2),
+			self.at(start+3)
+		]
 	}
 }
 
@@ -86,37 +125,71 @@ fn all_different<T: PartialEq>(elements: &[T]) -> bool {
 	true
 }
 
-#[derive(Clone,Copy)]
+#[derive(Clone)]
 pub struct CpuConfig {
-	num_tracks: isize,
+	tracks: HashMap<TrackId, TrackKind>,
 }
 
 impl CpuConfig {
-	fn frame_size(&self) -> isize {
-		self.num_tracks
+	pub fn new() -> CpuConfig {
+		CpuConfig {
+			tracks: HashMap::new()
+		}
+	}
+
+	pub fn frame_size(&self) -> isize {
+		self.tracks.len() as isize
+	}
+
+	pub fn add_data_track(&mut self, id: TrackId) -> Track {
+		let track = Track {
+			track_num: self.tracks.len() as isize
+		};
+		let old = self.tracks.insert(id, TrackKind::Data(track));
+		assert!(old.is_none());
+		track
+	}
+
+	pub fn add_scratch_track(&mut self, id: TrackId) -> ScratchTrack {
+		let track = ScratchTrack {
+			track: Track {
+				track_num: self.tracks.len() as isize
+			}
+		};
+		let old = self.tracks.insert(id, TrackKind::Scratch(track));
+		assert!(old.is_none());
+		track
+	}
+
+	pub fn add_register_track(&mut self, id: TrackId, size: isize) -> Register {
+		let track = Register {
+			size,
+			track: Track {
+				track_num: self.tracks.len() as isize
+			}
+		};
+		let old = self.tracks.insert(id, TrackKind::Register(track));
+		assert!(old.is_none());
+		track
 	}
 }
 
 pub struct Cpu<'c> {
-	cfg: CpuConfig,
-	tracks: &'c mut HashMap<TrackId, TrackKind>,
+	cfg: &'c CpuConfig,
 	cur_track: isize,
 	cur_frame: Option<isize>,
 	lir: Vec<Lir>
 }
 
 impl<'c> Cpu<'c> {
-	pub fn new(tracks: &'c mut HashMap<TrackId, TrackKind>) -> Cpu<'c> {
+	pub fn new(cfg: &'c CpuConfig) -> Cpu<'c> {
 		let mut cpu = Cpu {
-			cfg: CpuConfig {
-				num_tracks: (tracks.len() as isize)
-			},
-			tracks,
+			cfg,
 			cur_track: 0,
 			cur_frame: Some(0),
 			lir: Vec::new()
 		};
-		for i in 0..(cpu.cfg.num_tracks*3) {
+		for i in 0..(cpu.cfg.frame_size()*3) {
 			cpu.lir.push(Lir::Right);
 		}
 		cpu
@@ -148,17 +221,17 @@ impl<'c> Cpu<'c> {
 		self.dec();
 	}
 
-	/*pub fn inc_by(&mut self, x: isize) {
+	pub fn inc_by(&mut self, x: isize) {
 		if x > 0 {
 			for i in 0..x {
-				self.lir.push(Lir::Inc);
+				self.inc();
 			}
 		} else {
 			for i in 0..x.abs() {
-				self.lir.push(Lir::Dec);
+				self.dec();
 			}
 		}
-	}*/
+	}
 
 	pub fn shift_cursor_untracked(&mut self, shift: isize) {
 		if shift < 0 {
@@ -223,7 +296,6 @@ impl<'c> Cpu<'c> {
 		self.goto(at);
 		let mut cpu = Cpu {
 			cfg: self.cfg,
-			tracks: self.tracks,
 			cur_track: self.cur_track,
 			cur_frame: self.cur_frame,
 			lir: Vec::new()
@@ -236,7 +308,6 @@ impl<'c> Cpu<'c> {
 	pub fn raw_loop(&mut self, f: impl for<'a> FnOnce(&'a mut Cpu)) {
 		let mut cpu = Cpu {
 			cfg: self.cfg,
-			tracks: self.tracks,
 			cur_track: self.cur_track,
 			cur_frame: self.cur_frame,
 			lir: Vec::new()
@@ -299,9 +370,20 @@ impl<'c> Cpu<'c> {
 		});
 	}
 
+	pub fn clr_at(&mut self, at: Pos) {
+		self.goto(at);
+		self.clr();
+	}
+
 	pub fn add_const_to_byte(&mut self, pos: Pos, val: u8) {
 		for i in 0..val {
 			self.inc_at(pos);
+		}
+	}
+
+	pub fn sub_const_from_byte(&mut self, pos: Pos, val: u8) {
+		for i in 0..val {
+			self.dec_at(pos);
 		}
 	}
 
@@ -339,10 +421,57 @@ impl<'c> Cpu<'c> {
 	}
 
 	pub fn movesub_byte(&mut self, from: Pos, to: Pos) {
-		assert!(from != to);
+		if from == to {
+			self.clr_at(from);
+			self.clr_at(to);
+		}
 		self.loop_while(from, |cpu| {
 			cpu.dec();
 			cpu.dec_at(to);
+		});
+	}
+	
+	pub fn if_nonzero_else(&mut self, cond: Pos, scratch_track: ScratchTrack, if_nonzero: impl for<'a> FnOnce(&'a mut Cpu), if_zero: impl for<'a> FnOnce(&'a mut Cpu)) {
+		let [byte_cpy, one, zero, zero2] = scratch_track.get_4_pos(0);
+		self.copy_byte(cond, byte_cpy, zero);
+		self.inc_at(one);
+		self.goto(byte_cpy);
+		self.raw_loop(move |cpu| {
+			cpu.clr();
+			if_nonzero(cpu);
+			cpu.goto(zero);
+		});
+		// we could be at byte_cpy (if 0) or at zero
+		assert_eq!(self.cur_frame, None);
+		assert_eq!(self.cur_track, scratch_track.track.track_num);
+		self.shift_frame_untracked(1);
+		// now we're at one or zero2
+		self.raw_loop(move |cpu| {
+			cpu.cur_frame = Some(one.frame);
+			if_zero(cpu);
+			cpu.goto(zero2);
+		});
+		self.cur_frame = Some(zero2.frame);
+		self.dec_at(one);
+	}
+
+	pub fn movesub_byte_clamped(&mut self, from: Pos, to: Pos, scratch_track: ScratchTrack) {
+		if from == to {
+			self.clr_at(from);
+			self.clr_at(to);
+		}
+		self.loop_while(from, |cpu| {
+			cpu.dec();
+			cpu.if_nonzero_else(
+				to,
+				scratch_track,
+				|cpu| {
+					cpu.dec_at(to);
+				},
+				|cpu| {
+					cpu.clr_at(from);
+				}
+			);
 		});
 	}
 
@@ -561,22 +690,101 @@ impl<'c> Cpu<'c> {
 		self.zero_byte(scratch_track.at(0));
 	}
 
-	pub fn moveprint_byte(&mut self, pos: Pos, result_scratch_track: ScratchTrack, division_internal_scratch_track: ScratchTrack) {
-		let singles = result_scratch_track.at(0);
-		let temp = result_scratch_track.at(1);
-		let tens = result_scratch_track.at(2);
-		let hundreds = result_scratch_track.at(3);
+	pub fn moveprint_digit(&mut self, pos: Pos) {
+		self.add_const_to_byte(pos, 48);
+		self.out();
+		self.clr();
+	}
+
+	pub fn moveprint_digit_if_nonzero(&mut self, pos: Pos) {
+		self.loop_while(pos, |cpu| {
+			cpu.add_const_to_byte(pos, 48);
+			cpu.out();
+			cpu.clr();
+		});
+	}
+
+	pub fn moveprint_hex_digit(&mut self, pos: Pos, scratch_track1: ScratchTrack, scratch_track2: ScratchTrack) {
+		let [byte_cpy, zero] = scratch_track2.get_2_pos(0);
+		self.copy_byte(pos, byte_cpy, zero);
+		self.add_const_to_byte(pos, 48);
+
+		self.add_const_to_byte(zero, 9);
+		self.movesub_byte_clamped(zero, byte_cpy, scratch_track1);
+
+		self.if_nonzero_else(
+			byte_cpy,
+			scratch_track1,
+			|cpu| {
+				cpu.goto(pos);
+				cpu.inc_by(7);
+				cpu.out();
+				cpu.clr();
+			},
+			|cpu| {
+				cpu.goto(pos);
+				cpu.out();
+				cpu.clr();
+			}
+		);
+		self.clr_at(byte_cpy);
+		self.clr_at(pos);
+	}
+
+	pub fn print_char(&mut self, c: char, scratch: Pos) {
+		let x = c as u32;
+		if x <= 8 || x >= 127 {
+			panic!("Printing unprintable char");
+		}
+		let x = x as u8;
+		self.add_const_to_byte(scratch, x);
+		self.out();
+		self.clr();
+	}
+
+	pub fn print_text(&mut self, s: &str, scratch_track: ScratchTrack) {
+		for c in s.chars() {
+			self.print_char(c, scratch_track.at(0));
+		}
+	}
+
+	pub fn moveprint_byte(&mut self, pos: Pos, scratch_track1: ScratchTrack, division_internal_scratch_track: ScratchTrack) {
+		let [singles, temp, tens, hundreds] = scratch_track1.get_4_pos(0);
 		self.movediv_byte_onto_zeros(pos, 10, temp, singles, division_internal_scratch_track);
 		self.movediv_byte_onto_zeros(temp, 10, hundreds, tens, division_internal_scratch_track);
-		self.add_const_to_byte(hundreds, 48);
-		self.out();
-		self.clr();
-		self.add_const_to_byte(tens, 48);
-		self.out();
-		self.clr();
-		self.add_const_to_byte(singles, 48);
-		self.out();
-		self.clr();
+		self.moveprint_digit_if_nonzero(hundreds);
+		self.moveprint_digit_if_nonzero(tens);
+		self.moveprint_digit(singles);
+	}
+
+	pub fn moveprint_register_hex(&mut self, register: Register, scratch_track1: ScratchTrack, scratch_track2: ScratchTrack, scratch_track3: ScratchTrack) {
+		self.print_text("0x", scratch_track1);
+		for i in 0..register.size {
+			let left = scratch_track1.at(i);
+			let right = scratch_track1.at(i+1);
+			self.movediv_byte_onto_zeros(register.at(i), 16, left, right, scratch_track2);
+			self.moveprint_hex_digit(left, scratch_track2, scratch_track3);
+			self.moveprint_hex_digit(right, scratch_track2, scratch_track3);
+		}
+	}
+
+	pub fn add_const_to_register(&mut self, register: Register, val: BigUint) {
+		let ten = BigUint::from(256u64);
+		let zero = BigUint::zero();
+		let mut div = val;
+		let mut i = 0;
+		while &div != &zero {
+			if i >= register.size {
+				panic!("Value too big to fit in register");
+			}
+			let (new_div, rem) = div.div_rem(&ten);
+			div = new_div;
+			let rem_bytes = rem.to_bytes_be();
+			assert_eq!(rem_bytes.len(), 1);
+			let rem = rem_bytes.last().unwrap();
+			self.add_const_to_byte(register.at(register.size - i - 1), *rem);
+			i += 1;
+		}
 	}
 
 	/*/// b -= a

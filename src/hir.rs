@@ -1,5 +1,5 @@
-use num_bigint::BigUint;
-use num_traits::Num;
+use num::BigUint;
+use num::Num;
 use nom::character::complete::{digit1};
 #[allow(unused_imports)]
 use nom::{
