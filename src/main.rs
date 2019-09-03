@@ -1,18 +1,18 @@
-mod hir;
-mod cpu;
 mod bf;
+mod cpu;
+mod hir;
 mod lir2bf;
 
 extern crate nom;
 extern crate num;
 
-use std::fmt::Debug;
-use std::collections::HashMap;
 use num::BigUint;
+use std::collections::HashMap;
+use std::fmt::Debug;
 
 use crate::bf::*;
-use crate::hir::*;
 use crate::cpu::*;
+use crate::hir::*;
 use crate::lir2bf::*;
 
 fn print_err<T>(e: impl Debug) -> T {
@@ -27,7 +27,9 @@ fn maina() {
     let contents = std::fs::read_to_string("progs/LostKng.b").expect("failed to read bf code");
     let prog = parse_bf(&contents).unwrap_or_else(print_err);
     let mut state = BfState::new();
-    state.run_ops(&prog, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
+    state
+        .run_ops(&prog, &mut std::io::stdin(), &mut std::io::stdout())
+        .unwrap_or_else(print_err);
 }
 
 #[allow(unused)]
@@ -50,7 +52,9 @@ fn mainc() {
     let ops = lir2bf(cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
-    state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
+    state
+        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout())
+        .unwrap_or_else(print_err);
 }
 
 #[allow(unused)]
@@ -73,7 +77,9 @@ fn maind() {
     let ops = lir2bf(cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
-    state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
+    state
+        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout())
+        .unwrap_or_else(print_err);
 }
 
 fn main() {
@@ -90,7 +96,9 @@ fn main() {
     let ops = lir2bf(cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
-    state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout()).unwrap_or_else(print_err);
+    state
+        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout())
+        .unwrap_or_else(print_err);
 
     // should print 0x0001E240
 }
@@ -104,7 +112,9 @@ mod test {
         let mut state = BfState::new();
         let mut r = i.as_bytes();
         let mut w = Vec::new();
-        state.run_ops(&prog, &mut r, &mut w).unwrap_or_else(print_err);
+        state
+            .run_ops(&prog, &mut r, &mut w)
+            .unwrap_or_else(print_err);
         assert_eq!(w, o.as_bytes());
     }
 
@@ -127,7 +137,7 @@ mod test {
             -]<<-]<+++++++++++[>+++>+++++++++>+++++++++>+<<<<-]>-.>-.++++
             +++.+++++++++++.<.>>.++.+++++++..<-.>>-[[-]<]",
             "",
-            "8 bit cells"
+            "8 bit cells",
         );
     }
 }
