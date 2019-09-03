@@ -1,19 +1,24 @@
+#![allow(dead_code, unused_imports)]
+
 mod bf;
 mod cpu;
 mod hir;
 mod lir2bf;
+mod sam;
+mod hir2sam;
 
 extern crate nom;
 extern crate num;
 
 use num::BigUint;
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 use crate::bf::*;
 use crate::cpu::*;
 use crate::hir::*;
 use crate::lir2bf::*;
+use crate::sam::*;
+use crate::hir2sam::*;
 
 fn print_err<T>(e: impl Debug) -> T {
     panic!("Error: {:?}", e)
@@ -33,9 +38,14 @@ fn maina() {
 }
 
 #[allow(unused)]
-fn mainb() {
-    println!("{:?}", parse_hir("48 + 37 * 4"));
-    println!("{:?}", parse_hir("test(foo(), 7)"));
+fn main() {
+    let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = 68; a = b; print(a); }").unwrap();
+    println!("{:?}", hir);
+    let sam = hir2sam(&hir);
+    println!("{:?}", sam);
+
+    let mut samstate = SamState::new();
+    samstate.run_ops(&sam.get("main").unwrap().instrs, &mut std::io::stdin(), &mut std::io::stdout());
 }
 
 #[allow(unused)]
@@ -82,7 +92,8 @@ fn maind() {
         .unwrap_or_else(print_err);
 }
 
-fn main() {
+#[allow(unused)]
+fn maine() {
     let mut cfg = CpuConfig::new();
     let register = cfg.add_register_track(TrackId::Register1, 4);
     let scratch1 = cfg.add_scratch_track(TrackId::Scratch1);

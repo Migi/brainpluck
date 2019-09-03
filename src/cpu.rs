@@ -180,7 +180,7 @@ impl<'c> Cpu<'c> {
             cur_frame: Some(0),
             lir: Vec::new(),
         };
-        for i in 0..(cpu.cfg.frame_size() * 3) {
+        for _ in 0..(cpu.cfg.frame_size() * 3) {
             cpu.lir.push(Lir::Right);
         }
         cpu
@@ -214,11 +214,11 @@ impl<'c> Cpu<'c> {
 
     pub fn inc_by(&mut self, x: isize) {
         if x > 0 {
-            for i in 0..x {
+            for _ in 0..x {
                 self.inc();
             }
         } else {
-            for i in 0..x.abs() {
+            for _ in 0..x.abs() {
                 self.dec();
             }
         }
@@ -226,11 +226,11 @@ impl<'c> Cpu<'c> {
 
     pub fn shift_cursor_untracked(&mut self, shift: isize) {
         if shift < 0 {
-            for i in 0..shift.abs() {
+            for _ in 0..shift.abs() {
                 self.lir.push(Lir::Left);
             }
         } else {
-            for i in 0..shift {
+            for _ in 0..shift {
                 self.lir.push(Lir::Right);
             }
         }
@@ -370,13 +370,13 @@ impl<'c> Cpu<'c> {
     }
 
     pub fn add_const_to_byte(&mut self, pos: Pos, val: u8) {
-        for i in 0..val {
+        for _ in 0..val {
             self.inc_at(pos);
         }
     }
 
     pub fn sub_const_from_byte(&mut self, pos: Pos, val: u8) {
-        for i in 0..val {
+        for _ in 0..val {
             self.dec_at(pos);
         }
     }
