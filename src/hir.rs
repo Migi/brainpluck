@@ -45,6 +45,7 @@ pub enum Expr {
 
 #[derive(Debug,Copy,Clone,Eq,PartialEq)]
 pub enum VarType {
+    Unit,
     U8,
     U32
 }
@@ -71,15 +72,15 @@ pub enum Stmt {
 
 #[derive(Debug,Clone)]
 pub struct FnArgDecl {
-    pub arg_name: String,
-    pub arg_type: VarType
+    pub name: String,
+    pub typ: VarType
 }
 
 #[derive(Debug,Clone)]
 pub struct FnDecl {
     pub name: String,
     pub args: Vec<FnArgDecl>,
-    pub ret: Option<VarType>,
+    pub ret: VarType,
     pub stmts: Vec<Stmt>
 }
 
@@ -275,8 +276,8 @@ fn fn_arg_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnArg
     Ok((
         i,
         FnArgDecl {
-            arg_name: arg_name.to_owned(),
-            arg_type: typ
+            name: arg_name.to_owned(),
+            typ
         }
     ))
 }
@@ -291,6 +292,7 @@ fn fn_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnDecl, E
     let (i, _) = ws(i)?;
     let (i, _) = tag(")")(i)?;
     let (i, ret) = opt(preceded(preceded(ws, tag("->")),type_name))(i)?;
+    let ret = ret.unwrap_or(VarType::Unit);
     let (i, _) = ws(i)?;
     let (i, _) = tag("{")(i)?;
     let (i, stmts) = many0(stmt)(i)?;

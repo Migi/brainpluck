@@ -24,7 +24,8 @@ pub enum SamOp {
 	AddConstToB(SamVal),
 	SubConstFromB(SamVal),
 	PrintA,
-	Call(String)
+	Call(String),
+	Ret
 }
 
 #[derive(Debug)]
@@ -46,7 +47,7 @@ impl SamFn {
 }
 
 impl SamOp {
-	fn encode(self) -> Vec<u8> {
+	fn encode(&self) -> Vec<u8> {
 		match self {
 			SamOp::Halt => {
 				vec![0]
@@ -58,19 +59,19 @@ impl SamOp {
 				vec![2]
 			},
 			SamOp::SetX(val) => {
-				vec![3, val]
+				vec![3, *val]
 			},
 			SamOp::SetY(val) => {
-				vec![4, val]
+				vec![4, *val]
 			},
 			SamOp::SetA(val) => {
 				let mut res = vec![5];
-				push_u32_to_vec(&mut res, val);
+				push_u32_to_vec(&mut res, *val);
 				res
 			},
 			SamOp::SetB(val) => {
 				let mut res = vec![6];
-				push_u32_to_vec(&mut res, val);
+				push_u32_to_vec(&mut res, *val);
 				res
 			},
 			SamOp::ReadAAtB => {
@@ -105,89 +106,28 @@ impl SamOp {
 			},
 			SamOp::AddConstToB(val) => {
 				let mut res = vec![17];
-				push_u32_to_vec(&mut res, val);
+				push_u32_to_vec(&mut res, *val);
 				res
 			},
 			SamOp::SubConstFromB(val) => {
 				let mut res = vec![18];
-				push_u32_to_vec(&mut res, val);
+				push_u32_to_vec(&mut res, *val);
 				res
 			},
 			SamOp::PrintA => {
 				vec![19]
 			},
-			SamOp::Call(f) => {
+			SamOp::Call(_f) => {
+				unimplemented!()
+			},
+			SamOp::Ret => {
 				unimplemented!()
 			},
 		}
 	}
 
 	fn len(&self) -> usize {
-		match self {
-			SamOp::Halt => {
-				1
-			},
-			SamOp::SwapXY => {
-				1
-			},
-			SamOp::SwapAB => {
-				1
-			},
-			SamOp::SetX(_val) => {
-				2
-			},
-			SamOp::SetY(_val) => {
-				2
-			},
-			SamOp::SetA(_val) => {
-				5
-			},
-			SamOp::SetB(_val) => {
-				5
-			},
-			SamOp::ReadAAtB => {
-				1
-			},
-			SamOp::ReadXAtB => {
-				1
-			},
-			SamOp::ReadYAtB => {
-				1
-			},
-			SamOp::WriteAAtB => {
-				1
-			},
-			SamOp::WriteXAtB => {
-				1
-			},
-			SamOp::WriteYAtB => {
-				1
-			},
-			SamOp::AddAToB => {
-				1
-			},
-			SamOp::SubAFromB => {
-				1
-			},
-			SamOp::PrintX => {
-				1
-			},
-			SamOp::StdinX => {
-				1
-			},
-			SamOp::AddConstToB(_val) => {
-				5
-			},
-			SamOp::SubConstFromB(_val) => {
-				5
-			},
-			SamOp::PrintA => {
-				1
-			},
-			SamOp::Call(f) => {
-				unimplemented!()
-			},
-		}
+		self.encode().len()
 	}
 }
 
@@ -233,7 +173,7 @@ fn decode_sam_op(slice: &[u8]) -> SamOp {
 		17 => SamOp::AddConstToB(decode_u32(&slice[1..5])),
 		18 => SamOp::SubConstFromB(decode_u32(&slice[1..5])),
 		19 => SamOp::PrintA,
-		// TODO: Call
+		// TODO: Call, Ret
 		_ => panic!("decoding invalid sam op!")
 	}
 }
@@ -420,6 +360,9 @@ impl SamState {
 			SamOp::Call(f) => {
 				unimplemented!()
 			}
+			SamOp::Ret => {
+				unimplemented!()
+			},
 		}
 		Ok(())
 	}
