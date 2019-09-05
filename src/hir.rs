@@ -41,6 +41,7 @@ pub enum Expr {
     VarRef(String),
     BinOp(BinOp),
     FnCall(FnCall),
+    Scope(Scope)
 }
 
 #[derive(Debug,Copy,Clone,Eq,PartialEq)]
@@ -77,11 +78,17 @@ pub struct FnArgDecl {
 }
 
 #[derive(Debug,Clone)]
+pub struct Scope {
+    pub stmts: Vec<Stmt>,
+    pub final_expr: Option<Box<Expr>>
+}
+
+#[derive(Debug,Clone)]
 pub struct FnDecl {
     pub name: String,
     pub args: Vec<FnArgDecl>,
     pub ret: VarType,
-    pub stmts: Vec<Stmt>
+    pub scope: Scope
 }
 
 #[derive(Debug)]
@@ -282,6 +289,22 @@ fn fn_arg_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnArg
     ))
 }
 
+fn scope<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Scope, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("{")(i)?;
+    let (i, stmts) = many0(stmt)(i)?;
+    let (i, final_expr) = opt(expr)(i)?;
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("}")(i)?;
+    Ok((
+        i,
+        Scope {
+            stmts,
+            final_expr: final_expr.map(|e| Box::new(e))
+        }
+    ))
+}
+
 fn fn_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnDecl, E> {
     let (i, _) = ws(i)?;
     let (i, _) = tag("fn")(i)?;
@@ -293,18 +316,14 @@ fn fn_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnDecl, E
     let (i, _) = tag(")")(i)?;
     let (i, ret) = opt(preceded(preceded(ws, tag("->")),type_name))(i)?;
     let ret = ret.unwrap_or(VarType::Unit);
-    let (i, _) = ws(i)?;
-    let (i, _) = tag("{")(i)?;
-    let (i, stmts) = many0(stmt)(i)?;
-    let (i, _) = ws(i)?;
-    let (i, _) = tag("}")(i)?;
+    let (i, scope) = scope(i)?;
     Ok((
         i,
         FnDecl {
             name: fn_name.to_owned(),
             args,
             ret,
-            stmts
+            scope
         }
     ))
 }

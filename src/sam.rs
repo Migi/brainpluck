@@ -1,9 +1,10 @@
 use std::io::{Read, Write};
+use crate::linker::*;
 
 pub type SamVal = u32;
 
-#[derive(Debug)]
-pub enum SamOp {
+#[derive(Debug, Copy, Clone)]
+pub enum SamSOp {
 	Halt,
 	SwapXY,
 	SwapAB,
@@ -24,109 +25,110 @@ pub enum SamOp {
 	AddConstToB(SamVal),
 	SubConstFromB(SamVal),
 	PrintA,
-	Call(String),
 	Ret
 }
 
 #[derive(Debug)]
-pub struct SamFn {
-	pub name: String,
-	pub arg_sizes: Vec<u32>,
-	pub ret_size: u32,
-	pub instrs: Vec<SamOp>
+pub enum SamOp {
+	Simple(SamSOp),
+	Call(SamVal)
 }
 
-impl SamFn {
-	fn total_arg_size(&self) -> u32 {
-		let mut result = 0;
-		for arg_size in &self.arg_sizes {
-			result += arg_size;
-		}
-		result
-	}
-}
-
-impl SamOp {
-	fn encode(&self) -> Vec<u8> {
+impl SamSOp {
+	pub fn encode(&self) -> Vec<u8> {
 		match self {
-			SamOp::Halt => {
+			SamSOp::Halt => {
 				vec![0]
 			},
-			SamOp::SwapXY => {
+			SamSOp::SwapXY => {
 				vec![1]
 			},
-			SamOp::SwapAB => {
+			SamSOp::SwapAB => {
 				vec![2]
 			},
-			SamOp::SetX(val) => {
+			SamSOp::SetX(val) => {
 				vec![3, *val]
 			},
-			SamOp::SetY(val) => {
+			SamSOp::SetY(val) => {
 				vec![4, *val]
 			},
-			SamOp::SetA(val) => {
+			SamSOp::SetA(val) => {
 				let mut res = vec![5];
 				push_u32_to_vec(&mut res, *val);
 				res
 			},
-			SamOp::SetB(val) => {
+			SamSOp::SetB(val) => {
 				let mut res = vec![6];
 				push_u32_to_vec(&mut res, *val);
 				res
 			},
-			SamOp::ReadAAtB => {
+			SamSOp::ReadAAtB => {
 				vec![7]
 			},
-			SamOp::ReadXAtB => {
+			SamSOp::ReadXAtB => {
 				vec![8]
 			},
-			SamOp::ReadYAtB => {
+			SamSOp::ReadYAtB => {
 				vec![9]
 			},
-			SamOp::WriteAAtB => {
+			SamSOp::WriteAAtB => {
 				vec![10]
 			},
-			SamOp::WriteXAtB => {
+			SamSOp::WriteXAtB => {
 				vec![11]
 			},
-			SamOp::WriteYAtB => {
+			SamSOp::WriteYAtB => {
 				vec![12]
 			},
-			SamOp::AddAToB => {
+			SamSOp::AddAToB => {
 				vec![13]
 			},
-			SamOp::SubAFromB => {
+			SamSOp::SubAFromB => {
 				vec![14]
 			},
-			SamOp::PrintX => {
+			SamSOp::PrintX => {
 				vec![15]
 			},
-			SamOp::StdinX => {
+			SamSOp::StdinX => {
 				vec![16]
 			},
-			SamOp::AddConstToB(val) => {
+			SamSOp::AddConstToB(val) => {
 				let mut res = vec![17];
 				push_u32_to_vec(&mut res, *val);
 				res
 			},
-			SamOp::SubConstFromB(val) => {
+			SamSOp::SubConstFromB(val) => {
 				let mut res = vec![18];
 				push_u32_to_vec(&mut res, *val);
 				res
 			},
-			SamOp::PrintA => {
+			SamSOp::PrintA => {
 				vec![19]
 			},
-			SamOp::Call(_f) => {
-				unimplemented!()
-			},
-			SamOp::Ret => {
-				unimplemented!()
+			SamSOp::Ret => {
+				vec![21]
 			},
 		}
 	}
 
-	fn len(&self) -> usize {
+	pub fn len(&self) -> usize {
+		self.encode().len()
+	}
+}
+
+impl SamOp {
+	pub fn encode(&self) -> Vec<u8> {
+		match self {
+			SamOp::Simple(op) => op.encode(),
+			SamOp::Call(c) => {
+				let mut res = vec![20];
+				push_u32_to_vec(&mut res, *c);
+				res
+			}
+		}
+	}
+
+	pub fn len(&self) -> usize {
 		self.encode().len()
 	}
 }
@@ -153,39 +155,41 @@ fn decode_u32(slice: &[u8]) -> u32 {
 
 fn decode_sam_op(slice: &[u8]) -> SamOp {
 	match slice[0] {
-		0 => SamOp::Halt,
-		1 => SamOp::SwapXY,
-		2 => SamOp::SwapAB,
-		3 => SamOp::SetX(slice[1]),
-		4 => SamOp::SetY(slice[1]),
-		5 => SamOp::SetA(decode_u32(&slice[1..5])),
-		6 => SamOp::SetB(decode_u32(&slice[1..5])),
-		7 => SamOp::ReadAAtB,
-		8 => SamOp::ReadXAtB,
-		9 => SamOp::ReadYAtB,
-		10 => SamOp::WriteAAtB,
-		11 => SamOp::WriteXAtB,
-		12 => SamOp::WriteYAtB,
-		13 => SamOp::AddAToB,
-		14 => SamOp::SubAFromB,
-		15 => SamOp::PrintX,
-		16 => SamOp::StdinX,
-		17 => SamOp::AddConstToB(decode_u32(&slice[1..5])),
-		18 => SamOp::SubConstFromB(decode_u32(&slice[1..5])),
-		19 => SamOp::PrintA,
-		// TODO: Call, Ret
+		0 => SamOp::Simple(SamSOp::Halt),
+		1 => SamOp::Simple(SamSOp::SwapXY),
+		2 => SamOp::Simple(SamSOp::SwapAB),
+		3 => SamOp::Simple(SamSOp::SetX(slice[1])),
+		4 => SamOp::Simple(SamSOp::SetY(slice[1])),
+		5 => SamOp::Simple(SamSOp::SetA(decode_u32(&slice[1..5]))),
+		6 => SamOp::Simple(SamSOp::SetB(decode_u32(&slice[1..5]))),
+		7 => SamOp::Simple(SamSOp::ReadAAtB),
+		8 => SamOp::Simple(SamSOp::ReadXAtB),
+		9 => SamOp::Simple(SamSOp::ReadYAtB),
+		10 => SamOp::Simple(SamSOp::WriteAAtB),
+		11 => SamOp::Simple(SamSOp::WriteXAtB),
+		12 => SamOp::Simple(SamSOp::WriteYAtB),
+		13 => SamOp::Simple(SamSOp::AddAToB),
+		14 => SamOp::Simple(SamSOp::SubAFromB),
+		15 => SamOp::Simple(SamSOp::PrintX),
+		16 => SamOp::Simple(SamSOp::StdinX),
+		17 => SamOp::Simple(SamSOp::AddConstToB(decode_u32(&slice[1..5]))),
+		18 => SamOp::Simple(SamSOp::SubConstFromB(decode_u32(&slice[1..5]))),
+		19 => SamOp::Simple(SamSOp::PrintA),
+		20 => SamOp::Call(decode_u32(&slice[1..5])),
+		21 => SamOp::Simple(SamSOp::Ret),
 		_ => panic!("decoding invalid sam op!")
 	}
 }
 
+#[derive(Debug)]
 pub struct SamState {
-    cells: Vec<u8>,
-    instr_ptr: usize,
-	halted: bool,
-	a: SamVal,
-	b: SamVal,
-	x: u8,
-	y: u8
+    pub cells: Vec<u8>,
+    pub instr_ptr: SamVal,
+	pub halted: bool,
+	pub a: SamVal,
+	pub b: SamVal,
+	pub x: u8,
+	pub y: u8
 }
 
 #[derive(Debug)]
@@ -196,42 +200,52 @@ pub enum SamRunOpError {
 }
 
 impl SamState {
-    pub fn new() -> SamState {
+    pub fn new(prog: CompiledSamProgram) -> SamState {
+		let instr_ptr = *prog.fn_start_poss.get("main").expect("no main function found");
+		let mut cells = prog.bytes;
+		let hlt = cells.len() as SamVal;
+		cells.extend(&[15]); // halt
+		let b = cells.len() as SamVal;
+		push_u32_to_vec(&mut cells, hlt);
         SamState {
-            cells: vec![0; 1000],
-            instr_ptr: 0,
+            cells,
+            instr_ptr,
 			halted: false,
 			a: 0,
-			b: 0,
+			b,
 			x: 0,
 			y: 0
         }
     }
 
-	fn reserve_cells(&mut self, max_cell: usize) {
-		if self.cells.len() <= max_cell {
-			self.cells.resize(max_cell+1, 0);
+	fn reserve_cells(&mut self, max_cell: SamVal) {
+		if self.cells.len() <= max_cell as usize {
+			self.cells.resize(max_cell as usize + 1, 0);
 		}
 	}
 
 	pub fn read_u32_at(&mut self, at: SamVal) -> SamVal {
-		self.reserve_cells(at as usize + 4);
+		self.reserve_cells(at + 4);
 		decode_u32(&self.cells[at as usize..])
 	}
 
 	pub fn read_u8_at(&mut self, at: SamVal) -> u8 {
-		self.reserve_cells(at as usize + 1);
+		self.reserve_cells(at + 1);
 		self.cells[at as usize]
 	}
 
 	pub fn write_u32_at(&mut self, val: SamVal, at: SamVal) {
-		self.reserve_cells(at as usize + 4);
+		self.reserve_cells(at + 4);
 		write_u32(&mut self.cells[at as usize..], val);
 	}
 
 	pub fn write_u8_at(&mut self, val: u8, at: SamVal) {
-		self.reserve_cells(at as usize + 1);
+		self.reserve_cells(at + 1);
 		self.cells[at as usize] = val;
+	}
+
+	pub fn decode_next_op(&self) -> SamOp {
+		decode_sam_op(&self.cells[self.instr_ptr as usize..])
 	}
 
 	pub fn step(
@@ -240,11 +254,20 @@ impl SamState {
         writer: &mut impl Write,
 	 ) -> Result<(), SamRunOpError> {
 		self.reserve_cells(self.instr_ptr + 5);
-		let op = decode_sam_op(&self.cells[self.instr_ptr as usize..]);
-		let op_len = op.len();
+		let op = self.decode_next_op();
 		let res = self.run_op(&op, reader, writer)?;
-		self.instr_ptr += op_len;
 		Ok(res)
+	}
+
+    pub fn run(
+        &mut self,
+        reader: &mut impl Read,
+        writer: &mut impl Write,
+    ) -> Result<(), SamRunOpError> {
+		while !self.halted {
+			self.step(reader, writer)?;
+		}
+		Ok(())
 	}
 
     pub fn run_op(
@@ -257,126 +280,118 @@ impl SamState {
 			return Err(SamRunOpError::Halted);
 		}
 		match op {
-			SamOp::Halt => {
-				self.halted = true;
-			},
-			SamOp::SwapXY => {
-				std::mem::swap(&mut self.x, &mut self.y);
-			},
-			SamOp::SwapAB => {
-				std::mem::swap(&mut self.a, &mut self.b);
-			},
-			SamOp::SetA(val) => {
-				self.a = *val;
-			},
-			SamOp::SetB(val) => {
-				self.b = *val;
-			},
-			SamOp::SetX(val) => {
-				self.x = *val;
-			},
-			SamOp::SetY(val) => {
-				self.y = *val;
-			},
-			SamOp::ReadAAtB => {
-				self.a = self.read_u32_at(self.b);
-			},
-			SamOp::ReadXAtB => {
-				self.x = self.read_u8_at(self.b);
-			},
-			SamOp::ReadYAtB => {
-				self.y = self.read_u8_at(self.b);
-			},
-			SamOp::WriteAAtB => {
-				self.write_u32_at(self.a, self.b);
-			},
-			SamOp::WriteXAtB => {
-				self.write_u8_at(self.x, self.b);
-			},
-			SamOp::WriteYAtB => {
-				self.write_u8_at(self.y, self.b);
-			},
-			SamOp::AddAToB => {
-				self.a += self.b;
-			},
-			SamOp::SubAFromB => {
-				self.a -= self.b;
-			},
-			SamOp::PrintX => {
-                let buf: [u8; 1] = [self.x];
-                match writer.write_all(&buf) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(SamRunOpError::WriterErr(e));
-                    }
-                }
-                match writer.flush() {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(SamRunOpError::WriterErr(e));
-                    }
-                }
-			},
-			SamOp::StdinX => {
-                let mut buf: [u8; 1] = [0; 1];
-                match reader.read_exact(&mut buf) {
-                    Ok(()) => {
-                        // simply ignore \r
-                        let c = buf[0];
-                        if c != 13 {
-                            self.x = c;
-                        }
-                    },
-                    Err(e) => match e.kind() {
-                        std::io::ErrorKind::UnexpectedEof => {
-                            self.x = 0;
-                        },
-                        _ => {
-                            return Err(SamRunOpError::ReaderErr(e));
-                        }
-                    },
-                }
-			},
-			SamOp::AddConstToB(val) => {
-				self.b += *val;
-			},
-			SamOp::SubConstFromB(val) => {
-				self.b -= *val;
-			},
-			SamOp::PrintA => {
-                match write!(writer, "{}", self.a) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(SamRunOpError::WriterErr(e));
-                    }
-                }
-                match writer.flush() {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(SamRunOpError::WriterErr(e));
-                    }
-                }
+			SamOp::Simple(op) => {
+				match op {
+					SamSOp::Halt => {
+						self.halted = true;
+					},
+					SamSOp::SwapXY => {
+						std::mem::swap(&mut self.x, &mut self.y);
+					},
+					SamSOp::SwapAB => {
+						std::mem::swap(&mut self.a, &mut self.b);
+					},
+					SamSOp::SetA(val) => {
+						self.a = *val;
+					},
+					SamSOp::SetB(val) => {
+						self.b = *val;
+					},
+					SamSOp::SetX(val) => {
+						self.x = *val;
+					},
+					SamSOp::SetY(val) => {
+						self.y = *val;
+					},
+					SamSOp::ReadAAtB => {
+						self.a = self.read_u32_at(self.b);
+					},
+					SamSOp::ReadXAtB => {
+						self.x = self.read_u8_at(self.b);
+					},
+					SamSOp::ReadYAtB => {
+						self.y = self.read_u8_at(self.b);
+					},
+					SamSOp::WriteAAtB => {
+						self.write_u32_at(self.a, self.b);
+					},
+					SamSOp::WriteXAtB => {
+						self.write_u8_at(self.x, self.b);
+					},
+					SamSOp::WriteYAtB => {
+						self.write_u8_at(self.y, self.b);
+					},
+					SamSOp::AddAToB => {
+						self.a += self.b;
+					},
+					SamSOp::SubAFromB => {
+						self.a -= self.b;
+					},
+					SamSOp::PrintX => {
+						let buf: [u8; 1] = [self.x];
+						match writer.write_all(&buf) {
+							Ok(()) => {}
+							Err(e) => {
+								return Err(SamRunOpError::WriterErr(e));
+							}
+						}
+						match writer.flush() {
+							Ok(()) => {}
+							Err(e) => {
+								return Err(SamRunOpError::WriterErr(e));
+							}
+						}
+					},
+					SamSOp::StdinX => {
+						let mut buf: [u8; 1] = [0; 1];
+						match reader.read_exact(&mut buf) {
+							Ok(()) => {
+								// simply ignore \r
+								let c = buf[0];
+								if c != 13 {
+									self.x = c;
+								}
+							},
+							Err(e) => match e.kind() {
+								std::io::ErrorKind::UnexpectedEof => {
+									self.x = 0;
+								},
+								_ => {
+									return Err(SamRunOpError::ReaderErr(e));
+								}
+							},
+						}
+					},
+					SamSOp::AddConstToB(val) => {
+						self.b += *val;
+					},
+					SamSOp::SubConstFromB(val) => {
+						self.b -= *val;
+					},
+					SamSOp::PrintA => {
+						match write!(writer, "{}", self.a) {
+							Ok(()) => {}
+							Err(e) => {
+								return Err(SamRunOpError::WriterErr(e));
+							}
+						}
+						match writer.flush() {
+							Ok(()) => {}
+							Err(e) => {
+								return Err(SamRunOpError::WriterErr(e));
+							}
+						}
+					},
+					SamSOp::Ret => {
+						let p = self.read_u32_at(self.b);
+						self.instr_ptr = p;
+					}
+				}
+				self.instr_ptr += op.len() as SamVal;
 			},
 			SamOp::Call(f) => {
-				unimplemented!()
-			}
-			SamOp::Ret => {
-				unimplemented!()
-			},
-		}
-		Ok(())
-	}
-
-    pub fn run_ops(
-        &mut self,
-        ops: &[SamOp],
-        reader: &mut impl Read,
-        writer: &mut impl Write,
-    ) -> Result<(), SamRunOpError> {
-		for op in ops {
-			self.run_op(&op, reader, writer)?;
-			if self.halted {
-				return Ok(());
+				self.write_u32_at(self.instr_ptr+4, self.b);
+				self.instr_ptr = *f;
 			}
 		}
 		Ok(())

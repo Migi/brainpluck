@@ -1,5 +1,6 @@
 use crate::hir::*;
 use crate::sam::*;
+use crate::linker::*;
 use num::BigUint;
 use num::Num;
 
@@ -7,11 +8,12 @@ use std::collections::HashMap;
 
 pub fn hir2sam<'a>(program: &'a Program) -> HashMap<String, SamFn> {
 	let mut sam_fns = HashMap::new();
-	for (_fn_name, function) in program.fns.iter() {
-		let mut cpu = SamCpu::new(&program.fns);
-		for stmt in &function.stmts {
+	for (fn_name, function) in program.fns.iter() {
+		let mut cpu = SamCpu::new(&program.fns, fn_name);
+		for stmt in &function.scope.stmts {
 			cpu.exec_stmt(stmt);
 		}
+		cpu.ret(function.scope.final_expr.as_ref().map(|e| &**e));
 		let prev = sam_fns.insert(function.name.clone(), SamFn {
 			name: function.name.clone(),
 			arg_sizes: function.args.iter().map(|x| type_size(x.typ)).collect(),
@@ -56,11 +58,13 @@ struct Locals<'a> {
 	cur_stack_size: u32
 }
 
+#[derive(Copy, Clone)]
 struct NewLocal<'a> {
 	name: Option<&'a str>,
 	typ: VarType
 }
 
+#[derive(Copy, Clone)]
 enum Dest<'a> {
 	None,
 	NewLocal(NewLocal<'a>),
@@ -91,14 +95,14 @@ impl<'a> Locals<'a> {
 		self.create(NewLocal {
 			name: Some(name),
 			typ
-		});
+		})
 	}
 
 	fn new_temp(&mut self, typ: VarType) -> LocalVar<'a> {
 		self.create(NewLocal {
 			name: None,
 			typ
-		});
+		})
 	}
 }
 
@@ -110,15 +114,28 @@ fn type_size(typ: VarType) -> u32 {
 	}
 }
 
+fn types_compatible(type1: VarType, type2: Option<VarType>) -> bool {
+	match type2 {
+		Some(type2) => {
+			type1 == type2
+		},
+		None => {
+			true
+		}
+	}
+}
+
 struct SamCpu<'a> {
 	locals: Locals<'a>,
-	out: Vec<SamOp>,
+	out: Vec<SamLOp>,
 	cur_b_offset: u32,
-	fn_decls: &'a HashMap<String, FnDecl>
+	fn_decls: &'a HashMap<String, FnDecl>,
+	valret_local: LocalVar<'a>,
+	iret_local: LocalVar<'a>
 }
 
 impl<'a> SamCpu<'a> {
-	pub fn new(fn_decls: &'a HashMap<String, FnDecl>) -> SamCpu<'a> {
+	/*pub fn new(fn_decls: &'a HashMap<String, FnDecl>) -> SamCpu<'a> {
 		SamCpu {
 			locals: Locals {
 				locals: HashMap::new(),
@@ -128,6 +145,27 @@ impl<'a> SamCpu<'a> {
 			cur_b_offset: 0,
 			fn_decls
 		}
+	}*/
+
+	pub fn new(fn_decls: &'a HashMap<String, FnDecl>, fn_name: &'a str) -> SamCpu<'a> {
+		let decl = fn_decls.get(fn_name).expect("Compiling unknown function");
+		let mut locals = Locals {
+			locals: HashMap::new(),
+			cur_stack_size: 0
+		};
+		let valret_local = locals.new_temp(decl.ret);
+		for arg in &decl.args {
+			locals.new_named(&arg.name, arg.typ);
+		}
+		let iret_local = locals.new_temp(VarType::U32);
+		SamCpu {
+			locals,
+			out: Vec::new(),
+			cur_b_offset: iret_local.location,
+			fn_decls,
+			valret_local,
+			iret_local
+		}
 	}
 
 	pub fn scope<R>(&mut self, f: impl for<'b> FnOnce(&'b mut SamCpu<'a>) -> R) -> R {
@@ -135,7 +173,9 @@ impl<'a> SamCpu<'a> {
 			locals: self.locals.clone(),
 			out: Vec::new(),
 			cur_b_offset: self.cur_b_offset,
-			fn_decls: self.fn_decls
+			fn_decls: self.fn_decls,
+			valret_local: self.valret_local,
+			iret_local: self.iret_local
 		};
 		let rust_closure_return = f(&mut cpu);
 		self.out.extend(cpu.out);
@@ -145,9 +185,9 @@ impl<'a> SamCpu<'a> {
 
 	pub fn goto_b_offset(&mut self, offset: u32) {
 		if self.cur_b_offset < offset {
-			self.out.push(SamOp::AddConstToB(offset - self.cur_b_offset));
+			self.out.push(SamLOp::Simple(SamSOp::AddConstToB(offset - self.cur_b_offset)));
 		} else if offset < self.cur_b_offset {
-			self.out.push(SamOp::SubConstFromB(self.cur_b_offset - offset));
+			self.out.push(SamLOp::Simple(SamSOp::SubConstFromB(self.cur_b_offset - offset)));
 		}
 		self.cur_b_offset = offset;
 	}
@@ -181,40 +221,46 @@ impl<'a> SamCpu<'a> {
 			},
 			Expr::FnCall(f) => {
 				Some(self.fn_decls.get(&f.fn_name).expect("Calling unknown fn").ret)
-			}
+			},
+			Expr::Scope(s) => {
+				match &s.final_expr {
+					Some(e) => self.get_expr_type(e),
+					None => Some(VarType::Unit)
+				}
+			},
 		}
 	}
 
 	pub fn set_x(&mut self, val: &BigUint) {
-		self.out.push(SamOp::SetX(biguint_to_u8(val)));
+		self.out.push(SamLOp::Simple(SamSOp::SetX(biguint_to_u8(val))));
 	}
 
 	pub fn set_a(&mut self, val: &BigUint) {
-		self.out.push(SamOp::SetA(biguint_to_u32(val)));
+		self.out.push(SamLOp::Simple(SamSOp::SetA(biguint_to_u32(val))));
 	}
 
 	pub fn write_x_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U8);
 		self.goto_b_offset(local.location);
-		self.out.push(SamOp::WriteXAtB);
+		self.out.push(SamLOp::Simple(SamSOp::WriteXAtB));
 	}
 
 	pub fn write_a_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U32);
 		self.goto_b_offset(local.location);
-		self.out.push(SamOp::WriteAAtB);
+		self.out.push(SamLOp::Simple(SamSOp::WriteAAtB));
 	}
 
 	pub fn read_x_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U8);
 		self.goto_b_offset(local.location);
-		self.out.push(SamOp::ReadXAtB);
+		self.out.push(SamLOp::Simple(SamSOp::ReadXAtB));
 	}
 
 	pub fn read_a_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U32);
 		self.goto_b_offset(local.location);
-		self.out.push(SamOp::ReadAAtB);
+		self.out.push(SamLOp::Simple(SamSOp::ReadAAtB));
 	}
 
 	pub fn copy_local_to_local(&mut self, a: LocalVar<'a>, b: LocalVar<'a>) {
@@ -235,6 +281,14 @@ impl<'a> SamCpu<'a> {
 		}
 	}
 
+	pub fn ret(&mut self, val: Option<&'a Expr>) {
+		if let Some(val) = val {
+			self.eval_expr(val, Dest::ExistingLocal(self.valret_local));
+		}
+		self.goto_b_offset(self.iret_local.location);
+		self.out.push(SamLOp::Simple(SamSOp::Ret));
+	}
+
 	pub fn eval_expr(&mut self, expr: &'a Expr, dest: Dest<'a>) {
 		//let expr_type = self.get_expr_type(expr);
 		match expr {
@@ -249,26 +303,28 @@ impl<'a> SamCpu<'a> {
 					},
 					Dest::NewLocal(local) => {
 						let local = self.locals.create(local);
-						match self.get_expr_type(expr) {
-							Unit => unreachable!(),
-							U8 => {
+						assert!(types_compatible(local.typ, self.get_expr_type(expr)));
+						match local.typ {
+							VarType::Unit => unreachable!(),
+							VarType::U8 => {
 								self.set_x(lit);
 								self.write_x_at(local);
 							},
-							U32 => {
+							VarType::U32 => {
 								self.set_a(lit);
 								self.write_a_at(local);
 							}
 						}
 					},
 					Dest::ExistingLocal(local) => {
-						match self.get_expr_type(expr) {
-							Unit => unreachable!(),
-							U8 => {
+						assert!(types_compatible(local.typ, self.get_expr_type(expr)));
+						match local.typ {
+							VarType::Unit => unreachable!(),
+							VarType::U8 => {
 								self.set_x(lit);
 								self.write_x_at(local);
 							},
-							U32 => {
+							VarType::U32 => {
 								self.set_a(lit);
 								self.write_a_at(local);
 							}
@@ -296,110 +352,7 @@ impl<'a> SamCpu<'a> {
 				}
 			},
 			Expr::FnCall(fncall) => {
-				self.call(fncall, dest).unwrap();
-			},
-			_ => unimplemented!()
-		}
-	}
-
-	pub fn eval_expr_to_local(&mut self, expr: &'a Expr, dest: LocalVar<'a>) {
-		match expr {
-			Expr::Literal(lit) => {
-				let bytes = lit.to_bytes_be();
-				if bytes.len() > type_size(dest.typ) as usize {
-					panic!("Literal too large for type");
-				}
-				match dest.typ {
-					VarType::U8 => {
-						self.goto_b_offset(dest.location);
-						self.out.push(SamOp::SetX(*bytes.last().unwrap()));
-						self.out.push(SamOp::WriteXAtB);
-					},
-					VarType::U32 => {
-						self.goto_b_offset(dest.location);
-						self.out.push(SamOp::SetA(biguint_to_u32(lit)));
-						self.out.push(SamOp::WriteAAtB);
-					},
-					VarType::Unit => {}
-				}
-			},
-			Expr::VarRef(varref) => {
-				let varref_local = *self.locals.get(&varref);
-				match dest.typ {
-					VarType::U8 => {
-						self.goto_b_offset(varref_local.location);
-						self.out.push(SamOp::ReadXAtB);
-					},
-					VarType::U32 => {
-						self.goto_b_offset(varref_local.location);
-						self.out.push(SamOp::ReadAAtB);
-					},
-					VarType::Unit => {}
-				}
-				match dest.typ {
-					VarType::U8 => {
-						self.goto_b_offset(dest.location);
-						self.out.push(SamOp::WriteXAtB);
-					},
-					VarType::U32 => {
-						self.goto_b_offset(dest.location);
-						self.out.push(SamOp::WriteAAtB);
-					},
-					VarType::Unit => {}
-				}
-			},
-			Expr::FnCall(fncall) => {
-				let ret_local = self.call(fncall, None).unwrap();
-				self.goto_b_offset(ret_local.location);
-				self.out.push(SamOp::ReadXAtB);
-			},
-			_ => unimplemented!()
-		}
-	}
-
-	pub fn eval_expr_to_x(&mut self, expr: &'a Expr) {
-		match expr {
-			Expr::Literal(lit) => {
-				let bytes = lit.to_bytes_be();
-				if bytes.len() != 1 {
-					panic!("Literal too large for type");
-				}
-				self.out.push(SamOp::SetX(*bytes.last().unwrap()));
-			},
-			Expr::VarRef(varref) => {
-				let varref_local = *self.locals.get(&varref);
-				if varref_local.typ != VarType::U8 {
-					panic!("Wrong type to eval to X");
-				}
-				self.goto_b_offset(varref_local.location);
-				self.out.push(SamOp::ReadXAtB);
-			},
-			Expr::FnCall(fncall) => {
-				let ret_local = self.call(fncall, None).unwrap();
-				self.goto_b_offset(ret_local.location);
-				self.out.push(SamOp::ReadXAtB);
-			},
-			_ => unimplemented!()
-		}
-	}
-
-	pub fn eval_expr_to_a(&mut self, expr: &'a Expr) {
-		match expr {
-			Expr::Literal(lit) => {
-				self.out.push(SamOp::SetA(biguint_to_u32(lit)));
-			},
-			Expr::VarRef(varref) => {
-				let varref_local = *self.locals.get(&varref);
-				if varref_local.typ != VarType::U32 {
-					panic!("Wrong type to eval to A");
-				}
-				self.goto_b_offset(varref_local.location);
-				self.out.push(SamOp::ReadAAtB);
-			},
-			Expr::FnCall(fncall) => {
-				let ret_local = self.call(fncall, None).unwrap();
-				self.goto_b_offset(ret_local.location);
-				self.out.push(SamOp::ReadAAtB);
+				self.call(fncall, dest);
 			},
 			_ => unimplemented!()
 		}
@@ -413,56 +366,70 @@ impl<'a> SamCpu<'a> {
 			match typ {
 				VarType::U8 => {
 					self.eval_expr(arg, Dest::X);
-					self.out.push(SamOp::PrintX);
+					self.out.push(SamLOp::Simple(SamSOp::PrintX));
 				},
 				VarType::U32 => {
 					self.eval_expr(arg, Dest::A);
-					self.out.push(SamOp::PrintA);
+					self.out.push(SamLOp::Simple(SamSOp::PrintA));
 				},
 				VarType::Unit => {
 					panic!("Printing unit");
 				}
 			}
-			None
 		} else {
 			let fn_decl = self.fn_decls.get(&fncall.fn_name).expect("Calling unknown function");
 			assert_eq!(fn_decl.args.len(), fncall.args.len());
-			if let Dest::NewLocal(newlocal) = dest {
+			let self_ret_local = if let Dest::NewLocal(newlocal) = dest {
 				assert_eq!(fn_decl.ret, newlocal.typ);
-				self.locals.create(newlocal);
-			}
-			self.scope(|cpu| {
-				match dest {
-					Dest::NewLocal(newlocal) => {
-						
-					}
-				};
-				cpu.locals.new_temp(fn_decl.ret);
-				let arg_locals : Vec<_> = fn_decl.args.iter().map(|arg| {
-					cpu.locals.new_temp(arg.typ)
-				}).collect();
-				let cpu_ret_local = cpu.locals.new_temp(VarType::U32);
-				for (arg_expr, arg_local) in fncall.args.iter().zip(arg_locals) {
-					cpu.eval_expr_to_local(arg_expr, arg_local);
+				Some(self.locals.create(newlocal))
+			} else {
+				None
+			};
+			let self_ret_local = self.scope(|cpu| {
+				let self_ret_local = self_ret_local.unwrap_or_else(|| cpu.locals.new_temp(fn_decl.ret));
+				for (arg_expr, arg_decl) in fncall.args.iter().zip(fn_decl.args.iter()) {
+					let arg_local = cpu.locals.new_temp(arg_decl.typ);
+					cpu.scope(|cpu| {
+						cpu.eval_expr(arg_expr, Dest::ExistingLocal(arg_local));
+					});
 				}
+				let cpu_ret_local = cpu.locals.new_temp(VarType::U32);
 				cpu.goto_b_offset(cpu_ret_local.location);
-				cpu.out.push(SamOp::Call(fn_decl.name.clone()));
-			})
+				cpu.out.push(SamLOp::Call(fn_decl.name.clone()));
+				self_ret_local
+			});
+			match dest {
+				Dest::None => {},
+				Dest::NewLocal(_) => {
+					// should be ok
+				},
+				Dest::ExistingLocal(dest_local) => {
+					self.copy_local_to_local(self_ret_local, dest_local);
+				},
+				Dest::A => {
+					self.read_a_at(self_ret_local)
+				},
+				Dest::X => {
+					self.read_x_at(self_ret_local)
+				}
+			}
 		}
 	}
 
 	pub fn exec_stmt(&mut self, stmt: &'a Stmt) {
 		match stmt {
 			Stmt::VarDecl(decl) => {
-				let local = self.locals.new_named(&decl.var_name, decl.typ);
-				self.eval_expr_to_local(&decl.init, local);
+				self.eval_expr(&decl.init, Dest::NewLocal(NewLocal {
+					name: Some(&decl.var_name),
+					typ: decl.typ
+				}));
 			},
 			Stmt::VarAssign(ass) => {
 				let local = *self.locals.get(&ass.var_name);
-				self.eval_expr_to_local(&ass.expr, local);
+				self.eval_expr(&ass.expr, Dest::ExistingLocal(local));
 			},
 			Stmt::FnCall(fncall) => {
-				self.call(fncall, None);
+				self.call(fncall, Dest::None);
 			}
 		}
 	}

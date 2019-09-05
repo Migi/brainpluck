@@ -6,6 +6,7 @@ mod hir;
 mod lir2bf;
 mod sam;
 mod hir2sam;
+mod linker;
 
 extern crate nom;
 extern crate num;
@@ -19,6 +20,7 @@ use crate::hir::*;
 use crate::lir2bf::*;
 use crate::sam::*;
 use crate::hir2sam::*;
+use crate::linker::*;
 
 fn print_err<T>(e: impl Debug) -> T {
     panic!("Error: {:?}", e)
@@ -39,13 +41,24 @@ fn maina() {
 
 #[allow(unused)]
 fn main() {
-    let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = 68; a = b; print(a); }").unwrap();
+    let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = foo(); let c : u32 = 88; print(b); } fn foo() -> u32 { let a : u32 = 9; let b: u32 = 17; b }").unwrap();
     println!("{:?}", hir);
     let sam = hir2sam(&hir);
     println!("{:?}", sam);
 
-    let mut samstate = SamState::new();
-    samstate.run_ops(&sam.get("main").unwrap().instrs, &mut std::io::stdin(), &mut std::io::stdout());
+    let linked = link_sam_fns(sam);
+    println!("{:?}", linked);
+
+    let mut samstate = SamState::new(linked);
+    //println!("{:?}", samstate);
+
+    while !samstate.halted {
+        //println!("{:?}", samstate.decode_next_op());
+        samstate.step(&mut std::io::stdin(), &mut std::io::stdout());
+        //println!("{:?}", samstate);
+    }
+
+    //println!();
 }
 
 #[allow(unused)]
