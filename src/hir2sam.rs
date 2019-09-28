@@ -73,6 +73,38 @@ enum Dest<'a> {
 	X
 }
 
+#[derive(Debug)]
+pub struct SamBlockArena {
+	blocks: Vec<Vec<SamLOp>>
+}
+
+impl SamBlockArena {
+	pub fn new_block_writer(&mut self) -> SamBlockWriter {
+		let new_block_index = self.blocks.len();
+		self.blocks.push(Vec::new());
+		SamBlockWriter {
+			arena: self,
+			block_index: new_block_index
+		}
+	}
+}
+
+#[derive(Debug)]
+pub struct SamBlockWriter<'o> {
+	arena: &'o mut SamBlockArena,
+	block_index: usize
+}
+
+impl<'o> SamBlockWriter<'o> {
+	pub fn add_op(&mut self, op: SamLOp) {
+		self.arena.blocks[self.block_index].push(op);
+	}
+
+	pub fn spawn_child_block(&mut self) -> SamBlockWriter {
+		self.arena.new_block_writer()
+	}
+}
+
 impl<'a> Locals<'a> {
 	fn get(&self, name: &'a str) -> &LocalVar<'a> {
 		self.locals.get(name).expect("Accessing unknown local")
@@ -125,16 +157,16 @@ fn types_compatible(type1: VarType, type2: Option<VarType>) -> bool {
 	}
 }
 
-struct SamCpu<'a> {
+struct SamCpu<'a,'o> {
 	locals: Locals<'a>,
-	out: Vec<SamLOp>,
+	out: SamBlockWriter<'o>,
 	cur_b_offset: u32,
 	fn_decls: &'a HashMap<String, FnDecl>,
 	valret_local: LocalVar<'a>,
 	iret_local: LocalVar<'a>
 }
 
-impl<'a> SamCpu<'a> {
+impl<'a, 'o> SamCpu<'a, 'o> {
 	/*pub fn new(fn_decls: &'a HashMap<String, FnDecl>) -> SamCpu<'a> {
 		SamCpu {
 			locals: Locals {
@@ -147,7 +179,7 @@ impl<'a> SamCpu<'a> {
 		}
 	}*/
 
-	pub fn new(fn_decls: &'a HashMap<String, FnDecl>, fn_name: &'a str) -> SamCpu<'a> {
+	pub fn new(fn_decls: &'a HashMap<String, FnDecl>, fn_name: &'a str, arena: &'o mut SamBlockArena) -> SamCpu<'a, 'o> {
 		let decl = fn_decls.get(fn_name).expect("Compiling unknown function");
 		let mut locals = Locals {
 			locals: HashMap::new(),
@@ -160,7 +192,7 @@ impl<'a> SamCpu<'a> {
 		let iret_local = locals.new_temp(VarType::U32);
 		SamCpu {
 			locals,
-			out: Vec::new(),
+			out: arena.new_block_writer(),
 			cur_b_offset: iret_local.location,
 			fn_decls,
 			valret_local,
@@ -168,26 +200,41 @@ impl<'a> SamCpu<'a> {
 		}
 	}
 
-	pub fn scope<R>(&mut self, f: impl for<'b> FnOnce(&'b mut SamCpu<'a>) -> R) -> R {
+	pub fn scope<R>(&mut self, f: impl for<'b> FnOnce(&'b mut SamCpu<'a, 'o>) -> R) -> R {
 		let mut cpu = SamCpu {
 			locals: self.locals.clone(),
-			out: Vec::new(),
+			out: self.out,
 			cur_b_offset: self.cur_b_offset,
 			fn_decls: self.fn_decls,
 			valret_local: self.valret_local,
 			iret_local: self.iret_local
 		};
 		let rust_closure_return = f(&mut cpu);
-		self.out.extend(cpu.out);
 		self.cur_b_offset = cpu.cur_b_offset;
 		rust_closure_return
 	}
 
+	pub fn block<R>(&mut self, f: impl for<'b,'p> FnOnce(&'b mut SamCpu<'a, 'p>)) -> usize {
+		let child_out = self.out.spawn_child_block();
+		let child_block_index = child_out.block_index;
+		let mut cpu = SamCpu {
+			locals: self.locals.clone(),
+			out: child_out,
+			cur_b_offset: self.cur_b_offset,
+			fn_decls: self.fn_decls,
+			valret_local: self.valret_local,
+			iret_local: self.iret_local
+		};
+		f(&mut cpu);
+		self.cur_b_offset = cpu.cur_b_offset;
+		child_block_index
+	}
+
 	pub fn goto_b_offset(&mut self, offset: u32) {
 		if self.cur_b_offset < offset {
-			self.out.push(SamLOp::Simple(SamSOp::AddConstToB(offset - self.cur_b_offset)));
+			self.out.add_op(SamLOp::Simple(SamSOp::AddConstToB(offset - self.cur_b_offset)));
 		} else if offset < self.cur_b_offset {
-			self.out.push(SamLOp::Simple(SamSOp::SubConstFromB(self.cur_b_offset - offset)));
+			self.out.add_op(SamLOp::Simple(SamSOp::SubConstFromB(self.cur_b_offset - offset)));
 		}
 		self.cur_b_offset = offset;
 	}
@@ -228,39 +275,43 @@ impl<'a> SamCpu<'a> {
 					None => Some(VarType::Unit)
 				}
 			},
+			Expr::IfElse(s) => {
+				self.eval_expr(&s.cond, Dest::X);
+
+			}
 		}
 	}
 
 	pub fn set_x(&mut self, val: &BigUint) {
-		self.out.push(SamLOp::Simple(SamSOp::SetX(biguint_to_u8(val))));
+		self.out.add_op(SamLOp::Simple(SamSOp::SetX(biguint_to_u8(val))));
 	}
 
 	pub fn set_a(&mut self, val: &BigUint) {
-		self.out.push(SamLOp::Simple(SamSOp::SetA(biguint_to_u32(val))));
+		self.out.add_op(SamLOp::Simple(SamSOp::SetA(biguint_to_u32(val))));
 	}
 
 	pub fn write_x_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U8);
 		self.goto_b_offset(local.location);
-		self.out.push(SamLOp::Simple(SamSOp::WriteXAtB));
+		self.out.add_op(SamLOp::Simple(SamSOp::WriteXAtB));
 	}
 
 	pub fn write_a_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U32);
 		self.goto_b_offset(local.location);
-		self.out.push(SamLOp::Simple(SamSOp::WriteAAtB));
+		self.out.add_op(SamLOp::Simple(SamSOp::WriteAAtB));
 	}
 
 	pub fn read_x_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U8);
 		self.goto_b_offset(local.location);
-		self.out.push(SamLOp::Simple(SamSOp::ReadXAtB));
+		self.out.add_op(SamLOp::Simple(SamSOp::ReadXAtB));
 	}
 
 	pub fn read_a_at(&mut self, local: LocalVar<'a>) {
 		assert_eq!(local.typ, VarType::U32);
 		self.goto_b_offset(local.location);
-		self.out.push(SamLOp::Simple(SamSOp::ReadAAtB));
+		self.out.add_op(SamLOp::Simple(SamSOp::ReadAAtB));
 	}
 
 	pub fn copy_local_to_local(&mut self, a: LocalVar<'a>, b: LocalVar<'a>) {
@@ -286,7 +337,7 @@ impl<'a> SamCpu<'a> {
 			self.eval_expr(val, Dest::ExistingLocal(self.valret_local));
 		}
 		self.goto_b_offset(self.iret_local.location);
-		self.out.push(SamLOp::Simple(SamSOp::Ret));
+		self.out.add_op(SamLOp::Simple(SamSOp::Ret));
 	}
 
 	pub fn eval_expr(&mut self, expr: &'a Expr, dest: Dest<'a>) {
@@ -366,11 +417,11 @@ impl<'a> SamCpu<'a> {
 			match typ {
 				VarType::U8 => {
 					self.eval_expr(arg, Dest::X);
-					self.out.push(SamLOp::Simple(SamSOp::PrintX));
+					self.out.add_op(SamLOp::Simple(SamSOp::PrintX));
 				},
 				VarType::U32 => {
 					self.eval_expr(arg, Dest::A);
-					self.out.push(SamLOp::Simple(SamSOp::PrintA));
+					self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
 				},
 				VarType::Unit => {
 					panic!("Printing unit");
@@ -395,7 +446,7 @@ impl<'a> SamCpu<'a> {
 				}
 				let cpu_ret_local = cpu.locals.new_temp(VarType::U32);
 				cpu.goto_b_offset(cpu_ret_local.location);
-				cpu.out.push(SamLOp::Call(fn_decl.name.clone()));
+				cpu.out.add_op(SamLOp::Call(fn_decl.name.clone()));
 				self_ret_local
 			});
 			match dest {
@@ -428,8 +479,11 @@ impl<'a> SamCpu<'a> {
 				let local = *self.locals.get(&ass.var_name);
 				self.eval_expr(&ass.expr, Dest::ExistingLocal(local));
 			},
-			Stmt::FnCall(fncall) => {
-				self.call(fncall, Dest::None);
+			Stmt::Expr(e) => {
+				self.eval_expr(e, Dest::None);
+			},
+			Stmt::IfMaybeElse(i) => {
+				unimplemented!()
 			}
 		}
 	}

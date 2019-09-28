@@ -31,7 +31,9 @@ pub enum SamSOp {
 #[derive(Debug)]
 pub enum SamOp {
 	Simple(SamSOp),
-	Call(SamVal)
+	Call(SamVal),
+	Jmp(SamVal),
+	JmpIfX(SamVal)
 }
 
 impl SamSOp {

@@ -4,7 +4,9 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub enum SamLOp {
 	Simple(SamSOp),
-	Call(String)
+	Call(String),
+	Jmp(usize),
+	JmpIfX(usize)
 }
 
 impl SamLOp {
@@ -21,7 +23,7 @@ pub struct SamFn {
 	pub name: String,
 	pub arg_sizes: Vec<u32>,
 	pub ret_size: u32,
-	pub instrs: Vec<SamLOp>
+	pub blocks: SamBlockList
 }
 
 impl SamFn {

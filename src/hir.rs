@@ -41,7 +41,8 @@ pub enum Expr {
     VarRef(String),
     BinOp(BinOp),
     FnCall(FnCall),
-    Scope(Scope)
+    Scope(Scope),
+    IfElse(Box<IfElse>)
 }
 
 #[derive(Debug,Copy,Clone,Eq,PartialEq)]
@@ -65,22 +66,37 @@ pub struct VarAssign {
 }
 
 #[derive(Debug,Clone)]
+pub struct Scope {
+    pub stmts: Vec<Stmt>,
+    pub final_expr: Option<Box<Expr>>
+}
+
+#[derive(Debug,Clone)]
+pub struct IfMaybeElse {
+    pub cond: Expr,
+    pub if_true: Expr,
+    pub if_false: Option<Expr>
+}
+
+#[derive(Debug,Clone)]
+pub struct IfElse {
+    pub cond: Expr,
+    pub if_true: Expr,
+    pub if_false: Expr
+}
+
+#[derive(Debug,Clone)]
 pub enum Stmt {
-    FnCall(FnCall),
+    Expr(Expr),
     VarDecl(VarDecl),
     VarAssign(VarAssign),
+    IfMaybeElse(IfMaybeElse)
 }
 
 #[derive(Debug,Clone)]
 pub struct FnArgDecl {
     pub name: String,
     pub typ: VarType
-}
-
-#[derive(Debug,Clone)]
-pub struct Scope {
-    pub stmts: Vec<Stmt>,
-    pub final_expr: Option<Box<Expr>>
 }
 
 #[derive(Debug,Clone)]
@@ -124,6 +140,7 @@ fn biguint<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, BigUint, 
 fn factor<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     alt((
         map(biguint, |u| Expr::Literal(u)),
+        map(if_else, |i| Expr::IfElse(Box::new(i))),
         map(fncall, |c| Expr::FnCall(c)),
         map(ident, |s| Expr::VarRef(s.to_owned())),
     ))(i)
@@ -223,6 +240,56 @@ fn type_name<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarType
     Ok((i, typ))
 }
 
+fn scope<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Scope, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("{")(i)?;
+    let (i, stmts) = many0(stmt)(i)?;
+    let (i, final_expr) = opt(expr)(i)?;
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("}")(i)?;
+    Ok((
+        i,
+        Scope {
+            stmts,
+            final_expr: final_expr.map(|e| Box::new(e))
+        }
+    ))
+}
+
+fn if_maybe_else<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, IfMaybeElse, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("if")(i)?;
+    let (i, cond) = expr(i)?;
+    let (i, if_true) = scope(i)?;
+    let (i, if_false) = opt(preceded(ws, preceded(tag("else"), scope)))(i)?;
+    Ok((
+        i,
+        IfMaybeElse {
+            cond,
+            if_true: Expr::Scope(if_true),
+            if_false: if_false.map(|s| Expr::Scope(s))
+        }
+    ))
+}
+
+fn if_else<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, IfElse, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("if")(i)?;
+    let (i, cond) = expr(i)?;
+    let (i, if_true) = scope(i)?;
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("else")(i)?;
+    let (i, if_false) = scope(i)?;
+    Ok((
+        i,
+        IfElse {
+            cond,
+            if_true: Expr::Scope(if_true),
+            if_false: Expr::Scope(if_false)
+        }
+    ))
+}
+
 fn var_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarDecl, E> {
     let (i, _) = ws(i)?;
     let (i, _) = tag("let ")(i)?;
@@ -244,8 +311,6 @@ fn var_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarDecl,
     ))
 }
 
-
-
 fn var_assign<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarAssign, E> {
     let (i, var_name) = ident(i)?;
     let (i, _) = ws(i)?;
@@ -263,9 +328,10 @@ fn var_assign<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarAss
 
 fn stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Stmt, E> {
     let (i, stmt) = alt((
-        map(fncall, |c| Stmt::FnCall(c)),
+        map(if_maybe_else, |i| Stmt::IfMaybeElse(i)),
         map(var_decl, |d| Stmt::VarDecl(d)),
         map(var_assign, |a| Stmt::VarAssign(a)),
+        map(expr, |e| Stmt::Expr(e)),
     ))(i)?;
     let (i, _) = ws(i)?;
     let (i, _) = tag(";")(i)?;
@@ -285,22 +351,6 @@ fn fn_arg_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnArg
         FnArgDecl {
             name: arg_name.to_owned(),
             typ
-        }
-    ))
-}
-
-fn scope<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Scope, E> {
-    let (i, _) = ws(i)?;
-    let (i, _) = tag("{")(i)?;
-    let (i, stmts) = many0(stmt)(i)?;
-    let (i, final_expr) = opt(expr)(i)?;
-    let (i, _) = ws(i)?;
-    let (i, _) = tag("}")(i)?;
-    Ok((
-        i,
-        Scope {
-            stmts,
-            final_expr: final_expr.map(|e| Box::new(e))
         }
     ))
 }
