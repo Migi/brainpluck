@@ -8,8 +8,11 @@ use std::collections::HashMap;
 
 pub fn hir2sam<'a>(program: &'a Program) -> HashMap<String, SamFn> {
 	let mut sam_fns = HashMap::new();
+	let mut sam_block_arena = SamBlockArena {
+		blocks: Vec::new()
+	};
 	for (fn_name, function) in program.fns.iter() {
-		let mut cpu = SamCpu::new(&program.fns, fn_name);
+		let mut cpu = SamCpu::new(&program.fns, fn_name, &mut sam_block_arena);
 		for stmt in &function.scope.stmts {
 			cpu.exec_stmt(stmt);
 		}
@@ -74,14 +77,23 @@ enum Dest<'a> {
 }
 
 #[derive(Debug)]
+pub struct SamBlock {
+	ops: Vec<SamLOp>,
+	next_block_index: Option<usize>
+}
+
+#[derive(Debug)]
 pub struct SamBlockArena {
-	blocks: Vec<Vec<SamLOp>>
+	blocks: Vec<SamBlock>
 }
 
 impl SamBlockArena {
 	pub fn new_block_writer(&mut self) -> SamBlockWriter {
 		let new_block_index = self.blocks.len();
-		self.blocks.push(Vec::new());
+		self.blocks.push(SamBlock {
+			ops: Vec::new(),
+			next_block_index: None
+		});
 		SamBlockWriter {
 			arena: self,
 			block_index: new_block_index
@@ -97,11 +109,15 @@ pub struct SamBlockWriter<'o> {
 
 impl<'o> SamBlockWriter<'o> {
 	pub fn add_op(&mut self, op: SamLOp) {
-		self.arena.blocks[self.block_index].push(op);
+		self.arena.blocks[self.block_index].ops.push(op);
 	}
 
-	pub fn spawn_child_block(&mut self) -> SamBlockWriter {
-		self.arena.new_block_writer()
+	pub fn block_index(&self) -> usize {
+		self.block_index
+	}
+
+	pub fn set_next_block_index(&mut self, next_block_index: Option<usize>) {
+		self.arena.blocks[self.block_index].next_block_index = next_block_index;
 	}
 }
 
@@ -215,7 +231,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 	}
 
 	pub fn block<R>(&mut self, f: impl for<'b,'p> FnOnce(&'b mut SamCpu<'a, 'p>)) -> usize {
-		let child_out = self.out.spawn_child_block();
+		let child_out = self.out.arena.new_block_writer();
 		let child_block_index = child_out.block_index;
 		let mut cpu = SamCpu {
 			locals: self.locals.clone(),
@@ -228,6 +244,14 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 		f(&mut cpu);
 		self.cur_b_offset = cpu.cur_b_offset;
 		child_block_index
+	}
+
+	pub fn split_to_new_block(&mut self) -> (usize, usize) {
+		let old_block_index = self.out.block_index;
+		let new_block_index = self.out.arena.new_block_writer().block_index;
+		self.out.set_next_block_index(Some(new_block_index));
+		self.out.block_index = new_block_index;
+		(old_block_index, new_block_index)
 	}
 
 	pub fn goto_b_offset(&mut self, offset: u32) {
@@ -276,8 +300,23 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 				}
 			},
 			Expr::IfElse(s) => {
-				self.eval_expr(&s.cond, Dest::X);
-
+				let true_type = self.get_expr_type(&s.if_true);
+				let false_type = self.get_expr_type(&s.if_false);
+				match true_type {
+					Some(true_type) => {
+						match false_type {
+							Some(false_type) => {
+								if true_type == false_type {
+									Some(true_type)
+								} else {
+									panic!("Incompatible match arms in if/else");
+								}
+							},
+							None => Some(true_type)
+						}
+					},
+					None => false_type
+				}
 			}
 		}
 	}
@@ -404,6 +443,18 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 			},
 			Expr::FnCall(fncall) => {
 				self.call(fncall, dest);
+			},
+			Expr::IfElse(s) => {
+				self.eval_expr(&s.cond, Dest::X);
+				let true_block_index = self.block(|cpu| {
+					cpu.eval_expr(&s.if_true, dest);
+				});
+				let false_block_index = self.block(|cpu| {
+					cpu.eval_expr(&s.if_false, dest);
+				});
+				let (_old_index, new_index) = self.split_to_new_block();
+				self.out.arena.blocks[true_block_index].next_block_index = Some(new_index);
+				self.out.arena.blocks[false_block_index].next_block_index = Some(new_index);
 			},
 			_ => unimplemented!()
 		}
