@@ -8,10 +8,10 @@ use std::collections::HashMap;
 
 pub fn hir2sam<'a>(program: &'a Program) -> HashMap<String, SamFn> {
 	let mut sam_fns = HashMap::new();
-	let mut sam_block_arena = SamBlockArena {
-		blocks: Vec::new()
-	};
 	for (fn_name, function) in program.fns.iter() {
+		let mut sam_block_arena = SamBlockArena {
+			blocks: Vec::new()
+		};
 		let mut cpu = SamCpu::new(&program.fns, fn_name, &mut sam_block_arena);
 		for stmt in &function.scope.stmts {
 			cpu.exec_stmt(stmt);
@@ -21,7 +21,7 @@ pub fn hir2sam<'a>(program: &'a Program) -> HashMap<String, SamFn> {
 			name: function.name.clone(),
 			arg_sizes: function.args.iter().map(|x| type_size(x.typ)).collect(),
 			ret_size: type_size(function.ret),
-			instrs: cpu.out
+			blocks: sam_block_arena.blocks
 		});
 		assert!(prev.is_none());
 	}
@@ -78,13 +78,13 @@ enum Dest<'a> {
 
 #[derive(Debug)]
 pub struct SamBlock {
-	ops: Vec<SamLOp>,
-	next_block_index: Option<usize>
+	pub ops: Vec<SamLOp>,
+	pub next_block_index: Option<usize>
 }
 
 #[derive(Debug)]
 pub struct SamBlockArena {
-	blocks: Vec<SamBlock>
+	pub blocks: Vec<SamBlock>
 }
 
 impl SamBlockArena {
@@ -110,10 +110,6 @@ pub struct SamBlockWriter<'o> {
 impl<'o> SamBlockWriter<'o> {
 	pub fn add_op(&mut self, op: SamLOp) {
 		self.arena.blocks[self.block_index].ops.push(op);
-	}
-
-	pub fn block_index(&self) -> usize {
-		self.block_index
 	}
 
 	pub fn set_next_block_index(&mut self, next_block_index: Option<usize>) {
@@ -230,7 +226,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 		rust_closure_return
 	}
 
-	pub fn block<R>(&mut self, f: impl for<'b,'p> FnOnce(&'b mut SamCpu<'a, 'p>)) -> usize {
+	pub fn block(&mut self, f: impl for<'b,'p> FnOnce(&'b mut SamCpu<'a, 'p>)) -> usize {
 		let child_out = self.out.arena.new_block_writer();
 		let child_block_index = child_out.block_index;
 		let mut cpu = SamCpu {
@@ -452,7 +448,9 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 				let false_block_index = self.block(|cpu| {
 					cpu.eval_expr(&s.if_false, dest);
 				});
-				let (_old_index, new_index) = self.split_to_new_block();
+				self.out.add_op(SamLOp::JmpToBlockIfX(true_block_index));
+				let (old_index, new_index) = self.split_to_new_block();
+				self.out.arena.blocks[old_index].next_block_index = Some(false_block_index);
 				self.out.arena.blocks[true_block_index].next_block_index = Some(new_index);
 				self.out.arena.blocks[false_block_index].next_block_index = Some(new_index);
 			},
@@ -503,7 +501,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 			match dest {
 				Dest::None => {},
 				Dest::NewLocal(_) => {
-					// should be ok
+					// self_ret_local should be where the new local is
 				},
 				Dest::ExistingLocal(dest_local) => {
 					self.copy_local_to_local(self_ret_local, dest_local);

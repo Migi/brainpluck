@@ -1,12 +1,13 @@
 use crate::sam::*;
+use crate::hir2sam::SamBlock;
 use std::collections::HashMap;
 
 #[derive(Debug)]
 pub enum SamLOp {
 	Simple(SamSOp),
 	Call(String),
-	Jmp(usize),
-	JmpIfX(usize)
+	JmpToBlock(usize),
+	JmpToBlockIfX(usize)
 }
 
 impl SamLOp {
@@ -23,7 +24,7 @@ pub struct SamFn {
 	pub name: String,
 	pub arg_sizes: Vec<u32>,
 	pub ret_size: u32,
-	pub blocks: SamBlockList
+	pub blocks: Vec<SamBlock>,
 }
 
 impl SamFn {
@@ -43,6 +44,48 @@ pub struct CompiledSamProgram {
 }
 
 pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
+	#[derive(Debug)]
+	enum SamFnOp {
+		Simple(SamSOp),
+		Call(String),
+		JmpToByteOffset(SamVal),
+		JmpToByteOffsetIfX(SamVal)
+	}
+
+	let mut block_instrs = HashMap::new();
+	{
+		for (f_name, f) in &fns {
+			// greedily find a good order for the blocks (with few unnecessary jumps)
+			let mut block_included = f.blocks.iter().map(|_| false).collect::<Vec<_>>();
+			let mut block_order = Vec::new();
+			while block_order.len() < f.blocks.len() {
+				// find first unincluded block
+				let mut index = 0;
+				while block_included[index] {
+					index += 1;
+				}
+				// include the block, then its next block (if any), then its next block, etc
+				while !block_included[index] {
+					block_included[index] = true;
+					block_order.push(index);
+					if let Some(next) = f.blocks[index].next_block_index {
+						index = next;
+					} else {
+						break;
+					}
+				}
+			}
+			// calculate all blocks' first byte positions (relative to start of function)
+			let mut cur_num_bytes = 0;
+			let block_start_poss = f.blocks.iter().map(|block| {
+				for op in &block.ops {
+					cur_num_bytes += op.len();
+				}
+			}).collect::<Vec<_>>();
+		}
+	}
+
+	// calculate all functions' first byte positions
 	let mut fn_start_poss = HashMap::new();
 	{
 		let mut cur_num_bytes = 0;
