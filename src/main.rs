@@ -41,7 +41,8 @@ fn maina() {
 
 #[allow(unused)]
 fn main() {
-    let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = foo(); let c : u32 = 88; print(b); } fn foo() -> u32 { let a : u32 = 9; let b: u32 = 17; b }").unwrap();
+    //let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = foo(); let c : u32 = 88; print(b); } fn foo() -> u32 { let a : u32 = 9; let b: u32 = 17; b }").unwrap();
+    let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = if 11 { a } else { 9 }; print(b); }").unwrap();
     println!("{:?}", hir);
     let sam = hir2sam(&hir);
     println!("{:?}", sam);
@@ -58,7 +59,7 @@ fn main() {
         //println!("{:?}", samstate);
     }
 
-    //println!();
+    println!("Done.");
 }
 
 #[allow(unused)]

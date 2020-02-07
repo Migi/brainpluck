@@ -6,6 +6,11 @@ use num::Num;
 
 use std::collections::HashMap;
 
+// calling convention (stack):
+// - return value value
+// - arguments
+// - CALL instruction writes instruction ptr + 5 here (CALL is 5 bytes wide)
+
 pub fn hir2sam<'a>(program: &'a Program) -> HashMap<String, SamFn> {
 	let mut sam_fns = HashMap::new();
 	for (fn_name, function) in program.fns.iter() {
@@ -62,16 +67,9 @@ struct Locals<'a> {
 }
 
 #[derive(Copy, Clone)]
-struct NewLocal<'a> {
-	name: Option<&'a str>,
-	typ: VarType
-}
-
-#[derive(Copy, Clone)]
 enum Dest<'a> {
 	None,
-	NewLocal(NewLocal<'a>),
-	ExistingLocal(LocalVar<'a>),
+	Local(LocalVar<'a>),
 	A,
 	X
 }
@@ -115,6 +113,13 @@ impl<'o> SamBlockWriter<'o> {
 	pub fn set_next_block_index(&mut self, next_block_index: Option<usize>) {
 		self.arena.blocks[self.block_index].next_block_index = next_block_index;
 	}
+
+	pub fn reborrow_mut<'o2>(&'o2 mut self) -> SamBlockWriter<'o2> {
+		SamBlockWriter {
+			arena: &mut self.arena,
+			block_index: self.block_index
+		}
+	}
 }
 
 impl<'a> Locals<'a> {
@@ -122,31 +127,31 @@ impl<'a> Locals<'a> {
 		self.locals.get(name).expect("Accessing unknown local")
 	}
 
-	fn create(&mut self, newlocal: NewLocal<'a>) -> LocalVar<'a> {
+	fn create(&mut self, name: Option<&'a str>, typ: VarType) -> LocalVar<'a> {
 		let result = LocalVar {
-			name: newlocal.name.unwrap_or_else(|| "$temp"),
-			typ: newlocal.typ,
+			name: name.unwrap_or_else(|| "$temp"),
+			typ,
 			location: self.cur_stack_size
 		};
-		if let Some(name) = newlocal.name {
+		if let Some(name) = name {
 			self.locals.insert(name, result);
 		}
-		self.cur_stack_size += type_size(newlocal.typ);
+		self.cur_stack_size += type_size(typ);
 		result
 	}
 
 	fn new_named(&mut self, name: &'a str, typ: VarType) -> LocalVar<'a> {
-		self.create(NewLocal {
-			name: Some(name),
+		self.create(
+			Some(name),
 			typ
-		})
+		)
 	}
 
 	fn new_temp(&mut self, typ: VarType) -> LocalVar<'a> {
-		self.create(NewLocal {
-			name: None,
+		self.create(
+			None,
 			typ
-		})
+		)
 	}
 }
 
@@ -212,10 +217,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 		}
 	}
 
-	pub fn scope<R>(&mut self, f: impl for<'b> FnOnce(&'b mut SamCpu<'a, 'o>) -> R) -> R {
+	pub fn scope<R>(&mut self, f: impl for<'b, 'o2> FnOnce(&'b mut SamCpu<'a, 'o2>) -> R) -> R {
 		let mut cpu = SamCpu {
 			locals: self.locals.clone(),
-			out: self.out,
+			out: self.out.reborrow_mut(),
 			cur_b_offset: self.cur_b_offset,
 			fn_decls: self.fn_decls,
 			valret_local: self.valret_local,
@@ -226,7 +231,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 		rust_closure_return
 	}
 
-	pub fn block(&mut self, f: impl for<'b,'p> FnOnce(&'b mut SamCpu<'a, 'p>)) -> usize {
+	pub fn block(&mut self, f: impl for<'b,'o2> FnOnce(&'b mut SamCpu<'a, 'o2>)) -> usize {
 		let child_out = self.out.arena.new_block_writer();
 		let child_block_index = child_out.block_index;
 		let mut cpu = SamCpu {
@@ -369,7 +374,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 
 	pub fn ret(&mut self, val: Option<&'a Expr>) {
 		if let Some(val) = val {
-			self.eval_expr(val, Dest::ExistingLocal(self.valret_local));
+			self.eval_expr(val, Dest::Local(self.valret_local));
 		}
 		self.goto_b_offset(self.iret_local.location);
 		self.out.add_op(SamLOp::Simple(SamSOp::Ret));
@@ -387,22 +392,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 					Dest::A => {
 						self.set_a(lit);
 					},
-					Dest::NewLocal(local) => {
-						let local = self.locals.create(local);
-						assert!(types_compatible(local.typ, self.get_expr_type(expr)));
-						match local.typ {
-							VarType::Unit => unreachable!(),
-							VarType::U8 => {
-								self.set_x(lit);
-								self.write_x_at(local);
-							},
-							VarType::U32 => {
-								self.set_a(lit);
-								self.write_a_at(local);
-							}
-						}
-					},
-					Dest::ExistingLocal(local) => {
+					Dest::Local(local) => {
 						assert!(types_compatible(local.typ, self.get_expr_type(expr)));
 						match local.typ {
 							VarType::Unit => unreachable!(),
@@ -428,33 +418,58 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 					Dest::A => {
 						self.read_a_at(varref_local)
 					},
-					Dest::NewLocal(local) => {
-						let local = self.locals.create(local);
-						self.copy_local_to_local(varref_local, local);
-					},
-					Dest::ExistingLocal(local) => {
+					Dest::Local(local) => {
 						self.copy_local_to_local(varref_local, local);
 					}
 				}
 			},
+			Expr::BinOp(_binop) => {
+				unimplemented!()
+			},
 			Expr::FnCall(fncall) => {
 				self.call(fncall, dest);
 			},
+			Expr::Scope(s) => {
+				self.scope(|cpu| {
+					for stmt in &s.stmts {
+						cpu.exec_stmt(stmt);
+					}
+					if let Some(final_expr) = &s.final_expr {
+						cpu.eval_expr(final_expr, dest);
+					} else {
+						match dest {
+							Dest::None => {},
+							Dest::X => {
+								panic!("Scope has no final expression but evals to X!");
+							},
+							Dest::A => {
+								panic!("Scope has no final expression but evals to A!");
+							},
+							Dest::Local(local) => {
+								assert_eq!(local.typ, VarType::Unit);
+							}
+						}
+					}
+				});
+			},
 			Expr::IfElse(s) => {
 				self.eval_expr(&s.cond, Dest::X);
+				let start_b_offset = self.cur_b_offset;
 				let true_block_index = self.block(|cpu| {
 					cpu.eval_expr(&s.if_true, dest);
 				});
+				let end_b_offset = self.cur_b_offset;
+				self.cur_b_offset = start_b_offset;
 				let false_block_index = self.block(|cpu| {
 					cpu.eval_expr(&s.if_false, dest);
+					cpu.goto_b_offset(end_b_offset);
 				});
 				self.out.add_op(SamLOp::JmpToBlockIfX(true_block_index));
 				let (old_index, new_index) = self.split_to_new_block();
 				self.out.arena.blocks[old_index].next_block_index = Some(false_block_index);
 				self.out.arena.blocks[true_block_index].next_block_index = Some(new_index);
 				self.out.arena.blocks[false_block_index].next_block_index = Some(new_index);
-			},
-			_ => unimplemented!()
+			}
 		}
 	}
 
@@ -479,38 +494,29 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 		} else {
 			let fn_decl = self.fn_decls.get(&fncall.fn_name).expect("Calling unknown function");
 			assert_eq!(fn_decl.args.len(), fncall.args.len());
-			let self_ret_local = if let Dest::NewLocal(newlocal) = dest {
-				assert_eq!(fn_decl.ret, newlocal.typ);
-				Some(self.locals.create(newlocal))
-			} else {
-				None
-			};
-			let self_ret_local = self.scope(|cpu| {
-				let self_ret_local = self_ret_local.unwrap_or_else(|| cpu.locals.new_temp(fn_decl.ret));
+			let valret_local = self.scope(|cpu| {
+				let valret_local = cpu.locals.new_temp(fn_decl.ret);
 				for (arg_expr, arg_decl) in fncall.args.iter().zip(fn_decl.args.iter()) {
 					let arg_local = cpu.locals.new_temp(arg_decl.typ);
 					cpu.scope(|cpu| {
-						cpu.eval_expr(arg_expr, Dest::ExistingLocal(arg_local));
+						cpu.eval_expr(arg_expr, Dest::Local(arg_local));
 					});
 				}
-				let cpu_ret_local = cpu.locals.new_temp(VarType::U32);
-				cpu.goto_b_offset(cpu_ret_local.location);
+				let iret_local = cpu.locals.new_temp(VarType::U32);
+				cpu.goto_b_offset(iret_local.location);
 				cpu.out.add_op(SamLOp::Call(fn_decl.name.clone()));
-				self_ret_local
+				valret_local
 			});
 			match dest {
 				Dest::None => {},
-				Dest::NewLocal(_) => {
-					// self_ret_local should be where the new local is
-				},
-				Dest::ExistingLocal(dest_local) => {
-					self.copy_local_to_local(self_ret_local, dest_local);
+				Dest::Local(dest_local) => {
+					self.copy_local_to_local(valret_local, dest_local);
 				},
 				Dest::A => {
-					self.read_a_at(self_ret_local)
+					self.read_a_at(valret_local)
 				},
 				Dest::X => {
-					self.read_x_at(self_ret_local)
+					self.read_x_at(valret_local)
 				}
 			}
 		}
@@ -519,19 +525,17 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 	pub fn exec_stmt(&mut self, stmt: &'a Stmt) {
 		match stmt {
 			Stmt::VarDecl(decl) => {
-				self.eval_expr(&decl.init, Dest::NewLocal(NewLocal {
-					name: Some(&decl.var_name),
-					typ: decl.typ
-				}));
+				let local = self.locals.new_named(&decl.var_name, decl.typ);
+				self.eval_expr(&decl.init, Dest::Local(local));
 			},
 			Stmt::VarAssign(ass) => {
 				let local = *self.locals.get(&ass.var_name);
-				self.eval_expr(&ass.expr, Dest::ExistingLocal(local));
+				self.eval_expr(&ass.expr, Dest::Local(local));
 			},
 			Stmt::Expr(e) => {
 				self.eval_expr(e, Dest::None);
 			},
-			Stmt::IfMaybeElse(i) => {
+			Stmt::IfMaybeElse(_i) => {
 				unimplemented!()
 			}
 		}

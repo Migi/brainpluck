@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use crate::linker::*;
 
 pub type SamVal = u32;
+pub type SamIVal = i32;
 
 #[derive(Debug, Copy, Clone)]
 pub enum SamSOp {
@@ -32,8 +33,8 @@ pub enum SamSOp {
 pub enum SamOp {
 	Simple(SamSOp),
 	Call(SamVal),
-	Jmp(SamVal),
-	JmpIfX(SamVal)
+	Jmp(SamIVal),
+	JmpIfX(SamIVal)
 }
 
 impl SamSOp {
@@ -126,6 +127,16 @@ impl SamOp {
 				let mut res = vec![20];
 				push_u32_to_vec(&mut res, *c);
 				res
+			},
+			SamOp::Jmp(offset) => {
+				let mut res = vec![22];
+				push_samival_to_vec(&mut res, *offset);
+				res
+			},
+			SamOp::JmpIfX(offset) => {
+				let mut res = vec![23];
+				push_samival_to_vec(&mut res, *offset);
+				res
 			}
 		}
 	}
@@ -143,6 +154,14 @@ fn push_u32_to_vec(vec: &mut Vec<u8>, val: u32) {
 	vec.push(val3);
 }
 
+fn push_samival_to_vec(vec: &mut Vec<u8>, val: SamIVal) {
+	let [val0, val1, val2, val3] = val.to_be_bytes(); // TODO
+	vec.push(val0);
+	vec.push(val1);
+	vec.push(val2);
+	vec.push(val3);
+}
+
 fn write_u32(slice: &mut [u8], val: u32) {
 	let [val0, val1, val2, val3] = val.to_be_bytes();
 	slice[0] = val0;
@@ -153,6 +172,10 @@ fn write_u32(slice: &mut [u8], val: u32) {
 
 fn decode_u32(slice: &[u8]) -> u32 {
 	u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]])
+}
+
+fn decode_samival(slice: &[u8]) -> i32 {
+	i32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]) // TODO
 }
 
 fn decode_sam_op(slice: &[u8]) -> SamOp {
@@ -179,6 +202,8 @@ fn decode_sam_op(slice: &[u8]) -> SamOp {
 		19 => SamOp::Simple(SamSOp::PrintA),
 		20 => SamOp::Call(decode_u32(&slice[1..5])),
 		21 => SamOp::Simple(SamSOp::Ret),
+		22 => SamOp::Jmp(decode_samival(&slice[1..5])),
+		23 => SamOp::JmpIfX(decode_samival(&slice[1..5])),
 		_ => panic!("decoding invalid sam op!")
 	}
 }
@@ -283,6 +308,7 @@ impl SamState {
 		}
 		match op {
 			SamOp::Simple(op) => {
+				let mut jumped = false;
 				match op {
 					SamSOp::Halt => {
 						self.halted = true;
@@ -387,13 +413,34 @@ impl SamState {
 					SamSOp::Ret => {
 						let p = self.read_u32_at(self.b);
 						self.instr_ptr = p;
+						jumped = true;
 					}
 				}
-				self.instr_ptr += op.len() as SamVal;
+				if !jumped {
+					self.instr_ptr += op.len() as SamVal;
+				}
 			},
 			SamOp::Call(f) => {
-				self.write_u32_at(self.instr_ptr+4, self.b);
+				self.write_u32_at(self.instr_ptr+5, self.b);
 				self.instr_ptr = *f;
+			},
+			SamOp::Jmp(offset) => {
+				let new_instr_ptr = self.instr_ptr as SamIVal + *offset;
+				if new_instr_ptr < 0 {
+					panic!("Jumped left of tape!");
+				}
+				self.instr_ptr = new_instr_ptr as SamVal;
+			},
+			SamOp::JmpIfX(offset) => {
+				if self.x != 0 {
+					let new_instr_ptr = self.instr_ptr as SamIVal + *offset;
+					if new_instr_ptr < 0 {
+						panic!("Jumped left of tape!");
+					}
+					self.instr_ptr = new_instr_ptr as SamVal;
+				} else {
+					self.instr_ptr += op.len() as SamVal;
+				}
 			}
 		}
 		Ok(())
