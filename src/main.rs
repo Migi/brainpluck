@@ -40,7 +40,7 @@ fn maina() {
 }
 
 #[allow(unused)]
-fn main() {
+fn mainb() {
     let fibcode = std::fs::read_to_string("progs/fib.bfrs").expect("failed to read bfrs code");
 
     //let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = foo(); let c : u32 = 88; println(b); } fn foo() -> u32 { let a : u32 = 9; let b: u32 = 17; b }").unwrap();
@@ -71,14 +71,13 @@ fn main() {
 fn mainc() {
     let mut cfg = CpuConfig::new();
     let data = cfg.add_data_track(TrackId::Heap);
-    let scratch1 = cfg.add_scratch_track(TrackId::Scratch1);
-    let scratch2 = cfg.add_scratch_track(TrackId::Scratch2);
+    let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
     cpu.add_const_to_byte(data.at(0), 234);
-    cpu.moveprint_byte(data.at(0), scratch1, scratch2);
+    cpu.moveprint_byte(data.at(0), scratch);
 
-    let ops = lir2bf(cpu.into_ops());
+    let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
@@ -87,23 +86,24 @@ fn mainc() {
 }
 
 #[allow(unused)]
-fn maind() {
+fn main() {
     let mut cfg = CpuConfig::new();
     let register = cfg.add_register_track(TrackId::Register1, 4);
-    let scratch1 = cfg.add_scratch_track(TrackId::Scratch1);
-    let scratch2 = cfg.add_scratch_track(TrackId::Scratch2);
+    let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
-    cpu.add_const_to_register(register, BigUint::from(123456u64));
-    cpu.moveprint_byte(register.at(0), scratch1, scratch2);
-    cpu.print_text(", ", scratch1);
-    cpu.moveprint_byte(register.at(1), scratch1, scratch2);
-    cpu.print_text(", ", scratch1);
-    cpu.moveprint_byte(register.at(2), scratch1, scratch2);
-    cpu.print_text(", ", scratch1);
-    cpu.moveprint_byte(register.at(3), scratch1, scratch2);
+    cpu.add_const_to_register(register, BigUint::from(103050u64), scratch);
+    cpu.add_const_to_register(register, BigUint::from( 20406u64), scratch);
+    
+    cpu.moveprint_byte(register.at(0), scratch);
+    cpu.print_text(", ", scratch);
+    cpu.moveprint_byte(register.at(1), scratch);
+    cpu.print_text(", ", scratch);
+    cpu.moveprint_byte(register.at(2), scratch);
+    cpu.print_text(", ", scratch);
+    cpu.moveprint_byte(register.at(3), scratch);
 
-    let ops = lir2bf(cpu.into_ops());
+    let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
@@ -115,15 +115,13 @@ fn maind() {
 fn maine() {
     let mut cfg = CpuConfig::new();
     let register = cfg.add_register_track(TrackId::Register1, 4);
-    let scratch1 = cfg.add_scratch_track(TrackId::Scratch1);
-    let scratch2 = cfg.add_scratch_track(TrackId::Scratch2);
-    let scratch3 = cfg.add_scratch_track(TrackId::Scratch3);
+    let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
-    cpu.add_const_to_register(register, BigUint::from(123456u64));
-    cpu.moveprint_register_hex(register, scratch1, scratch2, scratch3);
+    cpu.set_register(register, BigUint::from(123456u64));
+    cpu.moveprint_register_hex(register, scratch);
 
-    let ops = lir2bf(cpu.into_ops());
+    let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
@@ -137,8 +135,7 @@ fn maine() {
 mod test {
     use super::*;
 
-    fn test_prog(prog: &str, i: &str, o: &str) {
-        let prog = parse_bf(prog).unwrap_or_else(print_err);
+    fn test_parsed_bf_prog(prog: &Vec<BfOp>, i: &str, o: &str) {
         let mut state = BfState::new();
         let mut r = i.as_bytes();
         let mut w = Vec::new();
@@ -148,19 +145,27 @@ mod test {
         assert_eq!(w, o.as_bytes());
     }
 
+    fn test_raw_bf_prog(prog: &str, i: &str, o: &str) {
+        test_parsed_bf_prog(&parse_bf(prog).unwrap_or_else(print_err), i, o);
+    }
+
+    fn test_lir_prog(prog: &Vec<Lir>, i: &str, o: &str) {
+        test_parsed_bf_prog(&lir2bf(prog), i, o);
+    }
+
     #[test]
     fn test_hello_world_1() {
-        test_prog("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.", "", "Hello World!\n");
+        test_raw_bf_prog("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.", "", "Hello World!\n");
     }
 
     #[test]
     fn test_hello_world_2() {
-        test_prog(">++++++++[-<+++++++++>]<.>>+>-[+]++>++>+++[>[->+++<<+++>]<<]>-----.>->+++..+++.>-.<<+[>[+>+]>>]<--------------.>>.+++.------.--------.>+.>+.", "", "Hello World!\n");
+        test_raw_bf_prog(">++++++++[-<+++++++++>]<.>>+>-[+]++>++>+++[>[->+++<<+++>]<<]>-----.>->+++..+++.>-.<<+[>[+>+]>>]<--------------.>>.+++.------.--------.>+.>+.", "", "Hello World!\n");
     }
 
     #[test]
     fn test_cell_size_check() {
-        test_prog(
+        test_raw_bf_prog(
             "++++++++[>++++++++<-]>[<++++>-]+<[>-<[>++++<-]>[<++++++++>-]<
             [>++++++++<-]+>[>++++++++++[>+++++<-]>+.-.[-]<<[-]<->] <[>>++
             +++++[>+++++++<-]>.+++++.[-]<<<-]] >[>++++++++[>+++++++<-]>.[
@@ -169,5 +174,39 @@ mod test {
             "",
             "8 bit cells",
         );
+    }
+
+    #[test]
+    fn test_add_const_to_register() {
+        let mut cfg = CpuConfig::new();
+        let register = cfg.add_register_track(TrackId::Register1, 4);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.add_const_to_register(register, BigUint::from(103050u64), scratch);
+        cpu.add_const_to_register(register, BigUint::from( 20406u64), scratch);
+
+        cpu.moveprint_byte(register.at(0), scratch);
+        cpu.print_text(", ", scratch);
+        cpu.moveprint_byte(register.at(1), scratch);
+        cpu.print_text(", ", scratch);
+        cpu.moveprint_byte(register.at(2), scratch);
+        cpu.print_text(", ", scratch);
+        cpu.moveprint_byte(register.at(3), scratch);
+
+        test_lir_prog(&cpu.into_ops(), "", "0, 1, 226, 64");
+    }
+
+    #[test]
+    fn test_print_register_hex() {
+        let mut cfg = CpuConfig::new();
+        let register = cfg.add_register_track(TrackId::Register1, 4);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_register(register, BigUint::from(123456u64));
+        cpu.moveprint_register_hex(register, scratch);
+
+        test_lir_prog(&cpu.into_ops(), "", "0x0001E240");
     }
 }

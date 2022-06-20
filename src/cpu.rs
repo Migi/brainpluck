@@ -72,16 +72,18 @@ impl Register {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ScratchTrack {
     pub track: Track,
+    pub offset: isize, // shift all accesses by this amount
+    pub dont_go_left_of: Option<isize>, // don't access left of this position (at offset=0)
 }
 
 impl ScratchTrack {
     pub fn at(&self, frame: isize) -> Pos {
-        self.track.at(frame)
-    }
-
-    #[allow(unused)]
-    pub fn get_1_pos(&self, start: isize) -> [Pos; 1] {
-        [self.at(start)]
+        if let Some(l) = self.dont_go_left_of {
+            if frame + self.offset < l {
+                panic!("Going left of scratchtrack's limits! {}+{} < {}", frame, self.offset, l);
+            }
+        }
+        self.track.at(frame + self.offset)
     }
 
     #[allow(unused)]
@@ -102,6 +104,54 @@ impl ScratchTrack {
             self.at(start + 2),
             self.at(start + 3),
         ]
+    }
+
+    fn get_split_scratch(&self, num_poss_split: isize) -> ScratchTrack {
+        ScratchTrack {
+            track: self.track,
+            dont_go_left_of: Some(self.dont_go_left_of.unwrap_or(0) + num_poss_split),
+            offset: self.offset
+        }
+    }
+
+    #[allow(unused)]
+    pub fn split_1(&self) -> (Pos, ScratchTrack) {
+        (
+            self.at(self.dont_go_left_of.unwrap_or(0) - self.offset),
+            self.get_split_scratch(1)
+        )
+    }
+
+    #[allow(unused)]
+    pub fn split_2(&self) -> ([Pos; 2], ScratchTrack) {
+        (
+            self.get_2_pos(self.dont_go_left_of.unwrap_or(0) - self.offset),
+            self.get_split_scratch(2)
+        )
+    }
+
+    #[allow(unused)]
+    pub fn split_3(&self) -> ([Pos; 3], ScratchTrack) {
+        (
+            self.get_3_pos(self.dont_go_left_of.unwrap_or(0) - self.offset),
+            self.get_split_scratch(3)
+        )
+    }
+
+    #[allow(unused)]
+    pub fn split_4(&self) -> ([Pos; 4], ScratchTrack) {
+        (
+            self.get_4_pos(self.dont_go_left_of.unwrap_or(0) - self.offset),
+            self.get_split_scratch(4)
+        )
+    }
+
+    pub fn shift_so_frame_is_legal(&mut self, frame: isize) {
+        if let Some(l) = self.dont_go_left_of {
+            if frame + self.offset < l {
+                self.offset = l - frame;
+            }
+        }
     }
 }
 
@@ -144,8 +194,10 @@ impl CpuConfig {
     pub fn add_scratch_track(&mut self, id: TrackId) -> ScratchTrack {
         let track = ScratchTrack {
             track: Track {
-                track_num: self.tracks.len() as isize,
+                track_num: self.tracks.len() as isize
             },
+            offset: 0,
+            dont_go_left_of: None
         };
         let old = self.tracks.insert(id, TrackKind::Scratch(track));
         assert!(old.is_none());
@@ -375,9 +427,22 @@ impl<'c> Cpu<'c> {
         }
     }
 
+    pub fn add_const_to_byte_with_carry_slow(&mut self, pos: Pos, val: u8, carry: Pos, scratch1: Pos, scratch2: Pos) {
+        assert!(all_different(&[pos, scratch1, scratch2]));
+        self.set_byte(scratch1, val);
+        self.moveadd_byte_with_carry_slow(scratch1, pos, carry, scratch2);
+    }
+
     pub fn sub_const_from_byte(&mut self, pos: Pos, val: u8) {
         for _ in 0..val {
             self.dec_at(pos);
+        }
+    }
+
+    pub fn set_byte(&mut self, pos: Pos, val: u8) {
+        self.clr_at(pos);
+        for _ in 0..val {
+            self.inc_at(pos);
         }
     }
 
@@ -398,9 +463,14 @@ impl<'c> Cpu<'c> {
         self.zero_register(register);
         ScratchTrack {
             track: register.track,
+            offset: 0,
+            dont_go_left_of: None
         }
     }
 
+    /// Does
+    /// to += from
+    /// from = 0
     pub fn moveadd_byte(&mut self, from: Pos, to: Pos) {
         if from == to {
             return;
@@ -426,16 +496,16 @@ impl<'c> Cpu<'c> {
         &mut self,
         cond: Pos,
         scratch_track: ScratchTrack,
-        if_nonzero: impl for<'a> FnOnce(&'a mut Cpu),
-        if_zero: impl for<'a> FnOnce(&'a mut Cpu),
+        if_nonzero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+        if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
     ) {
-        let [byte_cpy, one, zero, zero2] = scratch_track.get_4_pos(0);
+        let ([byte_cpy, one, zero, zero2], new_scratch) = scratch_track.split_4();
         self.copy_byte(cond, byte_cpy, zero);
         self.inc_at(one);
         self.goto(byte_cpy);
         self.raw_loop(move |cpu| {
             cpu.clr();
-            if_nonzero(cpu);
+            if_nonzero(cpu, new_scratch);
             cpu.goto(zero);
         });
         // we could be at byte_cpy (if 0) or at zero
@@ -445,7 +515,7 @@ impl<'c> Cpu<'c> {
         // now we're at one or zero2
         self.raw_loop(move |cpu| {
             cpu.cur_frame = Some(one.frame);
-            if_zero(cpu);
+            if_zero(cpu, new_scratch);
             cpu.goto(zero2);
         });
         self.cur_frame = Some(zero2.frame);
@@ -462,10 +532,10 @@ impl<'c> Cpu<'c> {
             cpu.if_nonzero_else(
                 to,
                 scratch_track,
-                |cpu| {
+                |cpu, _| {
                     cpu.dec_at(to);
                 },
-                |cpu| {
+                |cpu, _| {
                     cpu.clr_at(from);
                 },
             );
@@ -529,6 +599,11 @@ impl<'c> Cpu<'c> {
             return;
         }
         let mut scratch = self.get_pos_on_track_between(from, to, scratch_track.track);
+        if let Some(l) = scratch_track.dont_go_left_of {
+            if scratch.frame < l {
+                scratch.frame = l;
+            }
+        }
         if from == scratch {
             scratch.frame += 1;
             if to == scratch {
@@ -584,6 +659,7 @@ impl<'c> Cpu<'c> {
     }
 
     pub fn moveadd_byte_with_carry_slow(&mut self, a: Pos, b: Pos, carry: Pos, scratch: Pos) {
+        // slow, but unfortunately I don't know a much faster alternative...
         self.loop_while(a, |cpu| {
             cpu.dec();
             cpu.inc_at(carry);
@@ -600,9 +676,10 @@ impl<'c> Cpu<'c> {
         &mut self,
         a: Register,
         b: Register,
-        scratch_track: ScratchTrack,
+        mut scratch_track: ScratchTrack,
     ) {
         assert_eq!(a.size, b.size);
+        scratch_track.shift_so_frame_is_legal(0);
         for i in (0..a.size).rev() {
             if i > 0 {
                 self.moveadd_byte_with_carry_slow(
@@ -627,6 +704,9 @@ impl<'c> Cpu<'c> {
         }
     }
 
+    /// Does:
+    /// b += a
+    /// a = 0
     pub fn moveadd_registers(
         &mut self,
         a: Register,
@@ -642,8 +722,16 @@ impl<'c> Cpu<'c> {
             scratch_track2.track
         ]));
 
-        let sentinel_track = scratch_track1;
-        let carry_track = scratch_track2;
+        let mut sentinel_track = scratch_track1;
+        let mut carry_track = scratch_track2;
+
+        sentinel_track.shift_so_frame_is_legal(-2);
+        carry_track.shift_so_frame_is_legal(-2);
+
+        // make offsets of both scratch tracks the same
+        let offset = std::cmp::min(sentinel_track.offset, carry_track.offset);
+        sentinel_track.offset = offset;
+        carry_track.offset = offset;
 
         self.inc_at(sentinel_track.at(-2));
         for i in (1..a.size).rev() {
@@ -664,12 +752,12 @@ impl<'c> Cpu<'c> {
                         cpu.goto_track(b.track.track_num);
                     });
                     cpu.shift_frame_untracked(-1);
-                    cpu.cur_frame = Some(x);
+                    cpu.cur_frame = Some(carry_track.at(x).frame);
                 });
                 cpu.goto(sentinel_track.at(x + 1));
                 cpu.go_clear_sentinel_right();
                 cpu.inc();
-                cpu.cur_frame = Some(i);
+                cpu.cur_frame = Some(carry_track.at(i).frame);
             });
             self.dec_at(sentinel_track.at(i));
         }
@@ -684,8 +772,10 @@ impl<'c> Cpu<'c> {
         divisor: u8,
         div_result: Pos,
         rem_result: Pos,
-        scratch_track: ScratchTrack,
+        mut scratch_track: ScratchTrack,
     ) {
+        scratch_track.shift_so_frame_is_legal(0);
+
         // scratch structure:
         // - 0: divisor (kind of)
         // - 1: remainder
@@ -699,7 +789,7 @@ impl<'c> Cpu<'c> {
             cpu.goto(scratch_track.at(0));
             cpu.raw_loop(|cpu| {
                 // we must be at 0
-                assert_eq!(cpu.cur_frame, Some(0));
+                assert_eq!(cpu.cur_frame, Some(scratch_track.at(0).frame));
                 cpu.dec();
                 cpu.inc_at(scratch_track.at(1));
                 cpu.goto(scratch_track.at(2));
@@ -708,12 +798,12 @@ impl<'c> Cpu<'c> {
             cpu.shift_frame_untracked(1); // we're at 1 or 3
             cpu.raw_loop(|cpu| {
                 // we must be at 1, divisor == 0, remainder > 0
-                cpu.cur_frame = Some(1);
+                cpu.cur_frame = Some(scratch_track.at(1).frame);
                 cpu.moveadd_byte(scratch_track.at(1), scratch_track.at(0));
                 cpu.inc_at(div_result);
                 cpu.goto(scratch_track.at(3));
             });
-            cpu.cur_frame = Some(3);
+            cpu.cur_frame = Some(scratch_track.at(3).frame);
         });
         self.moveadd_byte(scratch_track.at(1), rem_result);
         self.zero_byte(scratch_track.at(0));
@@ -736,26 +826,25 @@ impl<'c> Cpu<'c> {
     pub fn moveprint_hex_digit(
         &mut self,
         pos: Pos,
-        scratch_track1: ScratchTrack,
-        scratch_track2: ScratchTrack,
+        scratch_track: ScratchTrack,
     ) {
-        let [byte_cpy, zero] = scratch_track2.get_2_pos(0);
+        let ([byte_cpy, zero], scratch_track) = scratch_track.split_2();
         self.copy_byte(pos, byte_cpy, zero);
         self.add_const_to_byte(pos, 48);
 
         self.add_const_to_byte(zero, 9);
-        self.movesub_byte_clamped(zero, byte_cpy, scratch_track1);
+        self.movesub_byte_clamped(zero, byte_cpy, scratch_track);
 
         self.if_nonzero_else(
             byte_cpy,
-            scratch_track1,
-            |cpu| {
+            scratch_track,
+            |cpu, _| {
                 cpu.goto(pos);
                 cpu.inc_by(7);
                 cpu.out();
                 cpu.clr();
             },
-            |cpu| {
+            |cpu, _| {
                 cpu.goto(pos);
                 cpu.out();
                 cpu.clr();
@@ -776,7 +865,8 @@ impl<'c> Cpu<'c> {
         self.clr();
     }
 
-    pub fn print_text(&mut self, s: &str, scratch_track: ScratchTrack) {
+    pub fn print_text(&mut self, s: &str, mut scratch_track: ScratchTrack) {
+        scratch_track.shift_so_frame_is_legal(0);
         for c in s.chars() {
             self.print_char(c, scratch_track.at(0));
         }
@@ -785,12 +875,11 @@ impl<'c> Cpu<'c> {
     pub fn moveprint_byte(
         &mut self,
         pos: Pos,
-        scratch_track1: ScratchTrack,
-        division_internal_scratch_track: ScratchTrack,
+        scratch_track: ScratchTrack,
     ) {
-        let [singles, temp, tens, hundreds] = scratch_track1.get_4_pos(0);
-        self.movediv_byte_onto_zeros(pos, 10, temp, singles, division_internal_scratch_track);
-        self.movediv_byte_onto_zeros(temp, 10, hundreds, tens, division_internal_scratch_track);
+        let ([singles, temp, tens, hundreds], div_scratch_track) = scratch_track.split_4();
+        self.movediv_byte_onto_zeros(pos, 10, temp, singles, div_scratch_track);
+        self.movediv_byte_onto_zeros(temp, 10, hundreds, tens, div_scratch_track);
         self.moveprint_digit_if_nonzero(hundreds);
         self.moveprint_digit_if_nonzero(tens);
         self.moveprint_digit(singles);
@@ -799,22 +888,19 @@ impl<'c> Cpu<'c> {
     pub fn moveprint_register_hex(
         &mut self,
         register: Register,
-        scratch_track1: ScratchTrack,
-        scratch_track2: ScratchTrack,
-        scratch_track3: ScratchTrack,
+        scratch_track: ScratchTrack
     ) {
-        self.print_text("0x", scratch_track1);
+        self.print_text("0x", scratch_track);
         for i in 0..register.size {
-            let left = scratch_track1.at(i);
-            let right = scratch_track1.at(i + 1);
-            self.movediv_byte_onto_zeros(register.at(i), 16, left, right, scratch_track2);
-            self.moveprint_hex_digit(left, scratch_track2, scratch_track3);
-            self.moveprint_hex_digit(right, scratch_track2, scratch_track3);
+            let ([left, right], scratch_track) = scratch_track.split_2();
+            self.movediv_byte_onto_zeros(register.at(i), 16, left, right, scratch_track);
+            self.moveprint_hex_digit(left, scratch_track);
+            self.moveprint_hex_digit(right, scratch_track);
         }
     }
 
-    pub fn add_const_to_register(&mut self, register: Register, val: BigUint) {
-        let ten = BigUint::from(256u64);
+    pub fn set_register(&mut self, register: Register, val: BigUint) {
+        let two_fifty_six = BigUint::from(256u64);
         let zero = BigUint::zero();
         let mut div = val;
         let mut i = 0;
@@ -822,12 +908,37 @@ impl<'c> Cpu<'c> {
             if i >= register.size {
                 panic!("Value too big to fit in register");
             }
-            let (new_div, rem) = div.div_rem(&ten);
+            let (new_div, rem) = div.div_rem(&two_fifty_six);
             div = new_div;
             let rem_bytes = rem.to_bytes_be();
             assert_eq!(rem_bytes.len(), 1);
             let rem = rem_bytes.last().unwrap();
-            self.add_const_to_byte(register.at(register.size - i - 1), *rem);
+            self.set_byte(register.at(register.size - i - 1), *rem);
+            i += 1;
+        }
+    }
+
+    pub fn add_const_to_register(&mut self, register: Register, val: BigUint, scratch_track: ScratchTrack) {
+        let ([carry, scratch1, scratch2], _) = scratch_track.split_3();
+        let two_fifty_six = BigUint::from(256u64);
+        let zero = BigUint::zero();
+        let mut div = val;
+        let mut i = 0;
+        while &div != &zero {
+            if i >= register.size {
+                panic!("Value too big to fit in register");
+            }
+            let (new_div, rem) = div.div_rem(&two_fifty_six);
+            div = new_div;
+            let rem_bytes = rem.to_bytes_be();
+            assert_eq!(rem_bytes.len(), 1);
+            let rem = rem_bytes.last().unwrap();
+            if i == register.size - 1 {
+                self.add_const_to_byte_with_carry_slow(register.at(register.size - i - 1), *rem, carry, scratch1, scratch2);
+                self.clr_at(carry);
+            } else {
+                self.add_const_to_byte_with_carry_slow(register.at(register.size - i - 1), *rem, register.at(register.size - i - 2), scratch1, scratch2);
+            }
             i += 1;
         }
     }

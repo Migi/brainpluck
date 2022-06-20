@@ -1,7 +1,7 @@
 use crate::bf::*;
 use crate::cpu::*;
 
-pub fn lir2bf(ops: Vec<Lir>) -> Vec<BfOp> {
+pub fn lir2bf(ops: &Vec<Lir>) -> Vec<BfOp> {
     let mut result = Vec::new();
     for op in ops {
         match op {
