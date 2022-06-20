@@ -86,11 +86,24 @@ pub struct IfElse {
 }
 
 #[derive(Debug,Clone)]
+pub struct ReturnStmt {
+    pub expr: Expr
+}
+
+#[derive(Debug,Clone)]
+pub struct WhileLoop {
+    pub cond: Expr,
+    pub inner: Expr
+}
+
+#[derive(Debug,Clone)]
 pub enum Stmt {
     Expr(Expr),
     VarDecl(VarDecl),
     VarAssign(VarAssign),
-    IfMaybeElse(IfMaybeElse)
+    IfMaybeElse(IfMaybeElse),
+    Return(ReturnStmt),
+    WhileLoop(WhileLoop)
 }
 
 #[derive(Debug,Clone)]
@@ -290,6 +303,20 @@ fn if_else<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, IfElse, E
     ))
 }
 
+fn while_loop<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, WhileLoop, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("while")(i)?;
+    let (i, cond) = expr(i)?;
+    let (i, inner) = scope(i)?;
+    Ok((
+        i,
+        WhileLoop {
+            cond,
+            inner: Expr::Scope(inner)
+        }
+    ))
+}
+
 fn var_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarDecl, E> {
     let (i, _) = ws(i)?;
     let (i, _) = tag("let ")(i)?;
@@ -326,11 +353,25 @@ fn var_assign<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarAss
     ))
 }
 
+fn return_stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, ReturnStmt, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("return")(i)?;
+    let (i, expr) = expr(i)?;
+    Ok((
+        i,
+        ReturnStmt {
+            expr
+        }
+    ))
+}
+
 fn stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Stmt, E> {
     let (i, stmt) = alt((
+        map(while_loop, |w| Stmt::WhileLoop(w)),
         map(if_maybe_else, |i| Stmt::IfMaybeElse(i)),
         map(var_decl, |d| Stmt::VarDecl(d)),
         map(var_assign, |a| Stmt::VarAssign(a)),
+        map(return_stmt, |s| Stmt::Return(s)),
         map(expr, |e| Stmt::Expr(e)),
     ))(i)?;
     let (i, _) = ws(i)?;

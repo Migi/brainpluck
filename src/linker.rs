@@ -87,8 +87,6 @@ pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
 				}
 			}
 			let pre_to_post_num = pre_to_post_num.into_iter().map(|x| x.unwrap()).collect::<Vec<_>>();
-			println!("{:?}", pre_to_post_num);
-			println!("{:?}", post_to_pre_num);
 			// calculate all blocks' first byte positions (relative to start of function)
 			let mut block_start_poss = Vec::new();
 			let mut cur_num_bytes = 0;
@@ -145,7 +143,6 @@ pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
 					}
 				}
 			}
-			println!("{:?}", ops);
 			fn_ops.insert(f_name.clone(), ops);
 		}
 	}

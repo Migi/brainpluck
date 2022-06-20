@@ -53,14 +53,14 @@ fn biguint_to_u8(ui: &BigUint) -> u8 {
 	*ui_bytes.last().unwrap()
 }
 
-#[derive(Copy,Clone)]
+#[derive(Copy, Clone, Debug)]
 struct LocalVar<'a> {
 	name: &'a str,
 	typ: VarType,
 	location: u32
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Locals<'a> {
 	locals: HashMap<&'a str, LocalVar<'a>>,
 	cur_stack_size: u32
@@ -184,18 +184,6 @@ struct SamCpu<'a,'o> {
 }
 
 impl<'a, 'o> SamCpu<'a, 'o> {
-	/*pub fn new(fn_decls: &'a HashMap<String, FnDecl>) -> SamCpu<'a> {
-		SamCpu {
-			locals: Locals {
-				locals: HashMap::new(),
-				cur_stack_size: 0
-			},
-			out: Vec::new(),
-			cur_b_offset: 0,
-			fn_decls
-		}
-	}*/
-
 	pub fn new(fn_decls: &'a HashMap<String, FnDecl>, fn_name: &'a str, arena: &'o mut SamBlockArena) -> SamCpu<'a, 'o> {
 		let decl = fn_decls.get(fn_name).expect("Compiling unknown function");
 		let mut locals = Locals {
@@ -218,22 +206,24 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 	}
 
 	pub fn scope<R>(&mut self, f: impl for<'b, 'o2> FnOnce(&'b mut SamCpu<'a, 'o2>) -> R) -> R {
-		let mut cpu = SamCpu {
-			locals: self.locals.clone(),
-			out: self.out.reborrow_mut(),
-			cur_b_offset: self.cur_b_offset,
-			fn_decls: self.fn_decls,
-			valret_local: self.valret_local,
-			iret_local: self.iret_local
+		let (rust_closure_return, cpu_b_offset, cpu_block_index) = {
+			let mut cpu = SamCpu {
+				locals: self.locals.clone(),
+				out: self.out.reborrow_mut(),
+				cur_b_offset: self.cur_b_offset,
+				fn_decls: self.fn_decls,
+				valret_local: self.valret_local,
+				iret_local: self.iret_local
+			};
+			(f(&mut cpu), cpu.cur_b_offset, cpu.out.block_index)
 		};
-		let rust_closure_return = f(&mut cpu);
-		self.cur_b_offset = cpu.cur_b_offset;
+		self.out.block_index = cpu_block_index;
+		self.cur_b_offset = cpu_b_offset;
 		rust_closure_return
 	}
 
-	pub fn block(&mut self, f: impl for<'b,'o2> FnOnce(&'b mut SamCpu<'a, 'o2>)) -> usize {
+	pub fn block(&mut self, f: impl for<'b,'o2> FnOnce(&'b mut SamCpu<'a, 'o2>)) -> (usize, usize) {
 		let child_out = self.out.arena.new_block_writer();
-		let child_block_index = child_out.block_index;
 		let mut cpu = SamCpu {
 			locals: self.locals.clone(),
 			out: child_out,
@@ -242,9 +232,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 			valret_local: self.valret_local,
 			iret_local: self.iret_local
 		};
+		let entry_index = cpu.out.block_index;
 		f(&mut cpu);
 		self.cur_b_offset = cpu.cur_b_offset;
-		child_block_index
+		(entry_index, cpu.out.block_index)
 	}
 
 	pub fn split_to_new_block(&mut self) -> (usize, usize) {
@@ -373,9 +364,19 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 	}
 
 	pub fn ret(&mut self, val: Option<&'a Expr>) {
+		/*println!("In RET. Cur b offset = {}. Valret local = {}, iret local = {}",
+			self.cur_b_offset,
+			self.valret_local.location,
+			self.iret_local.location
+		);*/
 		if let Some(val) = val {
 			self.eval_expr(val, Dest::Local(self.valret_local));
 		}
+		/*println!("B4 RET. Cur b offset = {}. Valret local = {}, iret local = {}",
+			self.cur_b_offset,
+			self.valret_local.location,
+			self.iret_local.location
+		);*/
 		self.goto_b_offset(self.iret_local.location);
 		self.out.add_op(SamLOp::Simple(SamSOp::Ret));
 	}
@@ -423,8 +424,121 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 					}
 				}
 			},
-			Expr::BinOp(_binop) => {
-				unimplemented!()
+			Expr::BinOp(binop) => {
+				let maybe_typ = self.get_expr_type(expr);
+				let typ = match dest {
+					Dest::None => {
+						if let Some(typ) = maybe_typ {
+							typ
+						} else {
+							panic!("Unknown type for binop!");
+						}
+					},
+					Dest::X => {
+						if let Some(typ) = maybe_typ {
+							assert_eq!(typ, VarType::U8);
+							typ
+						} else {
+							VarType::U8
+						}
+					},
+					Dest::A => {
+						if let Some(typ) = maybe_typ {
+							assert_eq!(typ, VarType::U32);
+							typ
+						} else {
+							VarType::U32
+						}
+					},
+					Dest::Local(local) => {
+						if let Some(typ) = maybe_typ {
+							assert_eq!(typ, local.typ);
+							typ
+						} else {
+							local.typ
+						}
+					}
+				};
+				self.scope(|cpu| {
+					let lhs_local = cpu.locals.new_temp(typ);
+					cpu.eval_expr(&binop.args.0, Dest::Local(lhs_local));
+					match typ {
+						VarType::U8 => {
+							cpu.eval_expr(&binop.args.1, Dest::X);
+							cpu.goto_b_offset(lhs_local.location);
+							match binop.kind {
+								BinOpKind::Plus => {
+									cpu.out.add_op(SamLOp::Simple(SamSOp::AddU8AtBToX));
+								},
+								BinOpKind::Minus => {
+									cpu.out.add_op(SamLOp::Simple(SamSOp::NegX));
+									cpu.out.add_op(SamLOp::Simple(SamSOp::AddU8AtBToX));
+								},
+								BinOpKind::Mul => {
+									cpu.out.add_op(SamLOp::Simple(SamSOp::MulU8AtBToX));
+								},
+								BinOpKind::Div => {
+									unimplemented!()
+								}
+							}
+						},
+						VarType::U32 => {
+							cpu.eval_expr(&binop.args.1, Dest::A);
+							cpu.goto_b_offset(lhs_local.location);
+							match binop.kind {
+								BinOpKind::Plus => {
+									cpu.out.add_op(SamLOp::Simple(SamSOp::AddU32AtBToA));
+								},
+								BinOpKind::Minus => {
+									cpu.out.add_op(SamLOp::Simple(SamSOp::NegA));
+									cpu.out.add_op(SamLOp::Simple(SamSOp::AddU32AtBToA));
+								},
+								BinOpKind::Mul => {
+									cpu.out.add_op(SamLOp::Simple(SamSOp::MulU32AtBToA));
+								},
+								BinOpKind::Div => {
+									unimplemented!()
+								}
+							}
+						},
+						VarType::Unit => {
+							panic!("Unit binop?")
+						}
+					}
+				});
+				match typ {
+					VarType::U8 => {
+						match dest {
+							Dest::None => {},
+							Dest::X => {
+								// result is already in x
+							},
+							Dest::A => {
+								panic!("Writing U8 to A?")
+							},
+							Dest::Local(l) => {
+								self.write_x_at(l);
+							}
+						}
+					},
+					VarType::U32 => {
+						match dest {
+							Dest::None => {},
+							Dest::X => {
+								panic!("Writing U32 to X?")
+							},
+							Dest::A => {
+								// result is already in a
+							},
+							Dest::Local(l) => {
+								self.write_a_at(l);
+							}
+						}
+					},
+					VarType::Unit => {
+						panic!("Unit binop?")
+					}
+				}
 			},
 			Expr::FnCall(fncall) => {
 				self.call(fncall, dest);
@@ -452,40 +566,65 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 					}
 				});
 			},
-			Expr::IfElse(s) => {
-				self.eval_expr(&s.cond, Dest::X);
+			Expr::IfElse(i) => {
+				self.eval_expr(&i.cond, Dest::X);
 				let start_b_offset = self.cur_b_offset;
-				let true_block_index = self.block(|cpu| {
-					cpu.eval_expr(&s.if_true, dest);
+				let (true_entry_index, true_exit_index) = self.block(|cpu| {
+					cpu.eval_expr(&i.if_true, dest);
 				});
 				let end_b_offset = self.cur_b_offset;
 				self.cur_b_offset = start_b_offset;
-				let false_block_index = self.block(|cpu| {
-					cpu.eval_expr(&s.if_false, dest);
+				let (false_entry_index, false_exit_index) = self.block(|cpu| {
+					cpu.eval_expr(&i.if_false, dest);
 					cpu.goto_b_offset(end_b_offset);
 				});
-				self.out.add_op(SamLOp::JmpToBlockIfX(true_block_index));
+				self.out.add_op(SamLOp::JmpToBlockIfX(true_entry_index));
 				let (old_index, new_index) = self.split_to_new_block();
-				self.out.arena.blocks[old_index].next_block_index = Some(false_block_index);
-				self.out.arena.blocks[true_block_index].next_block_index = Some(new_index);
-				self.out.arena.blocks[false_block_index].next_block_index = Some(new_index);
+				self.out.arena.blocks[old_index].next_block_index = Some(false_entry_index);
+				self.out.arena.blocks[true_exit_index].next_block_index = Some(new_index);
+				self.out.arena.blocks[false_exit_index].next_block_index = Some(new_index);
 			}
 		}
 	}
 
 	pub fn call(&mut self, fncall: &'a FnCall, dest: Dest<'a>) {
-		if fncall.fn_name == "print" {
+		if fncall.fn_name == "print" ||
+			fncall.fn_name == "println" ||
+			fncall.fn_name == "print_char"
+		{
 			assert_eq!(fncall.args.len(), 1);
 			let arg = &fncall.args[0];
 			let typ = self.get_expr_type(arg).unwrap_or_else(|| VarType::U32);
 			match typ {
 				VarType::U8 => {
 					self.eval_expr(arg, Dest::X);
-					self.out.add_op(SamLOp::Simple(SamSOp::PrintX));
+					if fncall.fn_name == "print" {
+						self.out.add_op(SamLOp::Simple(SamSOp::MoveXToA));
+						self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
+					} else if fncall.fn_name == "println" {
+						self.out.add_op(SamLOp::Simple(SamSOp::MoveXToA));
+						self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
+						self.out.add_op(SamLOp::Simple(SamSOp::SetX(10)));
+						self.out.add_op(SamLOp::Simple(SamSOp::PrintCharX));
+					} else if fncall.fn_name == "print_char" {
+						self.out.add_op(SamLOp::Simple(SamSOp::PrintCharX));
+					} else {
+						unimplemented!()
+					}
 				},
 				VarType::U32 => {
 					self.eval_expr(arg, Dest::A);
-					self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
+					if fncall.fn_name == "print" {
+						self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
+					} else if fncall.fn_name == "println" {
+						self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
+						self.out.add_op(SamLOp::Simple(SamSOp::SetX(10)));
+						self.out.add_op(SamLOp::Simple(SamSOp::PrintCharX));
+					} else if fncall.fn_name == "print_char" {
+						panic!("U32 is not a character")
+					} else {
+						unimplemented!()
+					}
 				},
 				VarType::Unit => {
 					panic!("Printing unit");
@@ -535,8 +674,42 @@ impl<'a, 'o> SamCpu<'a, 'o> {
 			Stmt::Expr(e) => {
 				self.eval_expr(e, Dest::None);
 			},
-			Stmt::IfMaybeElse(_i) => {
-				unimplemented!()
+			Stmt::IfMaybeElse(i) => {
+				self.eval_expr(&i.cond, Dest::X);
+				let start_b_offset = self.cur_b_offset;
+				let (true_entry_index, true_exit_index) = self.block(|cpu| {
+					cpu.eval_expr(&i.if_true, Dest::None);
+				});
+				let end_b_offset = self.cur_b_offset;
+				self.cur_b_offset = start_b_offset;
+				let (false_entry_index, false_exit_index) = self.block(|cpu| {
+					if let Some(if_false) = &i.if_false {
+						cpu.eval_expr(&if_false, Dest::None);
+					}
+					cpu.goto_b_offset(end_b_offset);
+				});
+				self.out.add_op(SamLOp::JmpToBlockIfX(true_entry_index));
+				let (old_index, new_index) = self.split_to_new_block();
+				self.out.arena.blocks[old_index].next_block_index = Some(false_entry_index);
+				self.out.arena.blocks[true_exit_index].next_block_index = Some(new_index);
+				self.out.arena.blocks[false_exit_index].next_block_index = Some(new_index);
+			},
+			Stmt::WhileLoop(w) => {
+				if self.out.arena.blocks[self.out.block_index].ops.len() > 0 {
+					self.split_to_new_block();
+				}
+				let start_block_index = self.out.block_index;
+				let start_b_offset = self.cur_b_offset;
+				self.eval_expr(&w.cond, Dest::X);
+				let (inner_entry_index, inner_exit_index) = self.block(|cpu| {
+					cpu.eval_expr(&w.inner, Dest::None);
+					cpu.goto_b_offset(start_b_offset);
+				});
+				self.out.add_op(SamLOp::JmpToBlockIfX(inner_entry_index));
+				self.out.arena.blocks[inner_exit_index].next_block_index = Some(start_block_index);
+			}
+			Stmt::Return(s) => {
+				self.ret(Some(&s.expr));
 			}
 		}
 	}
