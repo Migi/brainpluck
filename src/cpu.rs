@@ -14,7 +14,7 @@ pub enum Lir {
     Loop(Vec<Lir>),
     DebugMessage(String),
     Crash(String),
-    Breakpoint
+    Breakpoint,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -27,11 +27,11 @@ impl Pos {
     fn index(&self, cfg: &CpuConfig) -> isize {
         self.frame * cfg.frame_size() + self.track
     }
-    
+
     fn get_shifted(&self, frame_shift: isize) -> Pos {
         Pos {
             track: self.track,
-            frame: self.frame + frame_shift
+            frame: self.frame + frame_shift,
         }
     }
 }
@@ -54,7 +54,7 @@ impl Track {
 pub struct Register {
     pub track: Track,
     pub size: isize,
-    pub offset: isize
+    pub offset: isize,
 }
 
 impl Register {
@@ -69,7 +69,7 @@ impl Register {
 pub struct BinRegister {
     pub track: Track,
     pub size: isize,
-    pub offset: isize
+    pub offset: isize,
 }
 
 impl BinRegister {
@@ -80,7 +80,7 @@ impl BinRegister {
     }
 
     pub fn last_pos(&self) -> Pos {
-        self.at(self.size-1)
+        self.at(self.size - 1)
     }
 
     pub fn at_unchecked(&self, frame: isize) -> Pos {
@@ -91,7 +91,7 @@ impl BinRegister {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ScratchTrack {
     pub track: Track,
-    pub offset: isize, // shift all accesses by this amount
+    pub offset: isize,                  // shift all accesses by this amount
     pub dont_go_left_of: Option<isize>, // don't access left of this position (at offset=0)
 }
 
@@ -99,7 +99,10 @@ impl ScratchTrack {
     pub fn at(&self, frame: isize) -> Pos {
         if let Some(l) = self.dont_go_left_of {
             if frame + self.offset < l {
-                panic!("Going left of scratchtrack's limits! {}+{} < {}", frame, self.offset, l);
+                panic!(
+                    "Going left of scratchtrack's limits! {}+{} < {}",
+                    frame, self.offset, l
+                );
             }
         }
         self.track.at(frame + self.offset)
@@ -140,7 +143,7 @@ impl ScratchTrack {
         ScratchTrack {
             track: self.track,
             dont_go_left_of: Some(self.dont_go_left_of.unwrap_or(0) + num_poss_split),
-            offset: self.offset
+            offset: self.offset,
         }
     }
 
@@ -148,7 +151,7 @@ impl ScratchTrack {
     pub fn split_1(self) -> (Pos, ScratchTrack) {
         (
             self.at(self.dont_go_left_of.unwrap_or(0) - self.offset),
-            self.get_split_scratch(1)
+            self.get_split_scratch(1),
         )
     }
 
@@ -156,7 +159,7 @@ impl ScratchTrack {
     pub fn split_2(self) -> ([Pos; 2], ScratchTrack) {
         (
             self.get_2_pos(self.dont_go_left_of.unwrap_or(0) - self.offset),
-            self.get_split_scratch(2)
+            self.get_split_scratch(2),
         )
     }
 
@@ -164,7 +167,7 @@ impl ScratchTrack {
     pub fn split_3(self) -> ([Pos; 3], ScratchTrack) {
         (
             self.get_3_pos(self.dont_go_left_of.unwrap_or(0) - self.offset),
-            self.get_split_scratch(3)
+            self.get_split_scratch(3),
         )
     }
 
@@ -172,7 +175,7 @@ impl ScratchTrack {
     pub fn split_4(self) -> ([Pos; 4], ScratchTrack) {
         (
             self.get_4_pos(self.dont_go_left_of.unwrap_or(0) - self.offset),
-            self.get_split_scratch(4)
+            self.get_split_scratch(4),
         )
     }
 
@@ -180,7 +183,7 @@ impl ScratchTrack {
     pub fn split_5(self) -> ([Pos; 5], ScratchTrack) {
         (
             self.get_5_pos(self.dont_go_left_of.unwrap_or(0) - self.offset),
-            self.get_split_scratch(5)
+            self.get_split_scratch(5),
         )
     }
 
@@ -247,10 +250,10 @@ impl CpuConfig {
     pub fn add_scratch_track(&mut self, id: TrackId) -> ScratchTrack {
         let track = ScratchTrack {
             track: Track {
-                track_num: self.tracks.len() as isize
+                track_num: self.tracks.len() as isize,
             },
             offset: 0,
-            dont_go_left_of: None
+            dont_go_left_of: None,
         };
         let old = self.tracks.insert(id, TrackKind::Scratch(track));
         assert!(old.is_none());
@@ -263,7 +266,7 @@ impl CpuConfig {
             track: Track {
                 track_num: self.tracks.len() as isize,
             },
-            offset: 0
+            offset: 0,
         };
         let old = self.tracks.insert(id, TrackKind::Register(track));
         assert!(old.is_none());
@@ -272,14 +275,12 @@ impl CpuConfig {
 
     pub fn build_register_track(&mut self, id: TrackId) -> RegisterTrackBuilder {
         let track_num = self.tracks.len() as isize;
-        let track = Track {
-            track_num,
-        };
+        let track = Track { track_num };
         let old = self.tracks.insert(id, TrackKind::Data(track));
         assert!(old.is_none());
         RegisterTrackBuilder {
             cur_offset: 0,
-            track_num
+            track_num,
         }
     }
 }
@@ -294,7 +295,7 @@ pub enum TrackKind {
 
 pub struct RegisterTrackBuilder {
     cur_offset: isize,
-    track_num: isize
+    track_num: isize,
 }
 
 impl RegisterTrackBuilder {
@@ -302,9 +303,9 @@ impl RegisterTrackBuilder {
         let register = Register {
             size,
             track: Track {
-                track_num: self.track_num
+                track_num: self.track_num,
             },
-            offset: self.cur_offset
+            offset: self.cur_offset,
         };
         self.cur_offset += size;
         register
@@ -314,9 +315,9 @@ impl RegisterTrackBuilder {
         let register = BinRegister {
             size,
             track: Track {
-                track_num: self.track_num
+                track_num: self.track_num,
             },
-            offset: self.cur_offset
+            offset: self.cur_offset,
         };
         self.cur_offset += size;
         register
@@ -561,7 +562,14 @@ impl<'c> Cpu<'c> {
         }
     }
 
-    pub fn add_const_to_byte_with_carry_slow(&mut self, pos: Pos, val: u8, carry: Pos, scratch1: Pos, scratch2: Pos) {
+    pub fn add_const_to_byte_with_carry_slow(
+        &mut self,
+        pos: Pos,
+        val: u8,
+        carry: Pos,
+        scratch1: Pos,
+        scratch2: Pos,
+    ) {
         assert!(all_different(&[pos, scratch1, scratch2]));
         self.set_byte(scratch1, val);
         self.moveadd_byte_with_carry_slow(scratch1, pos, carry, scratch2);
@@ -596,7 +604,7 @@ impl<'c> Cpu<'c> {
         ScratchTrack {
             track: register.track,
             offset: 0,
-            dont_go_left_of: None
+            dont_go_left_of: None,
         }
     }
 
@@ -673,9 +681,10 @@ impl<'c> Cpu<'c> {
             scratch_track,
             |cpu, _| {
                 cpu.clr_at(pos);
-            }, |cpu, _| {
+            },
+            |cpu, _| {
                 cpu.inc_at(pos);
-            }
+            },
         );
     }
 
@@ -684,7 +693,7 @@ impl<'c> Cpu<'c> {
         register: Register,
         scratch_track: ScratchTrack,
         if_nonzero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
-        if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)
+        if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
     ) {
         let (acc, scratch_track) = scratch_track.split_1();
         for i in 0..register.size {
@@ -694,15 +703,10 @@ impl<'c> Cpu<'c> {
                 |cpu, _| {
                     cpu.inc_at(acc);
                 },
-                |_, _| {}
+                |_, _| {},
             );
         }
-        self.if_nonzero_else(
-            acc,
-            scratch_track,
-            if_nonzero,
-            if_zero
-        );
+        self.if_nonzero_else(acc, scratch_track, if_nonzero, if_zero);
         self.clr_at(acc);
     }
 
@@ -724,13 +728,8 @@ impl<'c> Cpu<'c> {
             },
             |cpu, scratch_track| {
                 cpu.dec_at(register.at(0));
-                cpu.if_register_nonzero_else(
-                    register,
-                    scratch_track,
-                    if_gt_zero,
-                    if_zero
-                )
-            }
+                cpu.if_register_nonzero_else(register, scratch_track, if_gt_zero, if_zero)
+            },
         );
     }
 
@@ -1037,11 +1036,7 @@ impl<'c> Cpu<'c> {
         });
     }
 
-    pub fn moveprint_hex_digit(
-        &mut self,
-        pos: Pos,
-        scratch_track: ScratchTrack,
-    ) {
+    pub fn moveprint_hex_digit(&mut self, pos: Pos, scratch_track: ScratchTrack) {
         let ([byte_cpy, zero], scratch_track) = scratch_track.split_2();
         self.copy_byte(pos, byte_cpy, zero);
         self.add_const_to_byte(pos, 48);
@@ -1086,11 +1081,7 @@ impl<'c> Cpu<'c> {
         }
     }
 
-    pub fn moveprint_byte(
-        &mut self,
-        pos: Pos,
-        scratch_track: ScratchTrack,
-    ) {
+    pub fn moveprint_byte(&mut self, pos: Pos, scratch_track: ScratchTrack) {
         let ([singles, temp, tens, hundreds], div_scratch_track) = scratch_track.split_4();
         self.movediv_byte_onto_zeros(pos, 10, temp, singles, div_scratch_track);
         self.movediv_byte_onto_zeros(temp, 10, hundreds, tens, div_scratch_track);
@@ -1099,11 +1090,7 @@ impl<'c> Cpu<'c> {
         self.moveprint_digit(singles);
     }
 
-    pub fn moveprint_register_hex(
-        &mut self,
-        register: Register,
-        scratch_track: ScratchTrack
-    ) {
+    pub fn moveprint_register_hex(&mut self, register: Register, scratch_track: ScratchTrack) {
         self.print_text("0x", scratch_track);
         for i in 0..register.size {
             let ([left, right], scratch_track) = scratch_track.split_2();
@@ -1136,7 +1123,12 @@ impl<'c> Cpu<'c> {
         }
     }
 
-    pub fn add_const_to_register(&mut self, register: Register, val: BigUint, scratch_track: ScratchTrack) {
+    pub fn add_const_to_register(
+        &mut self,
+        register: Register,
+        val: BigUint,
+        scratch_track: ScratchTrack,
+    ) {
         let ([carry, scratch1, scratch2], _) = scratch_track.split_3();
         let two_fifty_six = BigUint::from(256u64);
         let zero = BigUint::zero();
@@ -1152,10 +1144,22 @@ impl<'c> Cpu<'c> {
             assert_eq!(rem_bytes.len(), 1);
             let rem = rem_bytes.last().unwrap();
             if i == register.size - 1 {
-                self.add_const_to_byte_with_carry_slow(register.at(register.size - i - 1), *rem, carry, scratch1, scratch2);
+                self.add_const_to_byte_with_carry_slow(
+                    register.at(register.size - i - 1),
+                    *rem,
+                    carry,
+                    scratch1,
+                    scratch2,
+                );
                 self.clr_at(carry);
             } else {
-                self.add_const_to_byte_with_carry_slow(register.at(register.size - i - 1), *rem, register.at(register.size - i - 2), scratch1, scratch2);
+                self.add_const_to_byte_with_carry_slow(
+                    register.at(register.size - i - 1),
+                    *rem,
+                    register.at(register.size - i - 2),
+                    scratch1,
+                    scratch2,
+                );
             }
             i += 1;
         }
@@ -1167,7 +1171,7 @@ impl<'c> Cpu<'c> {
         scratch_track: ScratchTrack,
         init: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
         f: impl for<'a> FnOnce(&'a mut Cpu, Pos, ScratchTrack),
-        fin: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>
+        fin: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
     ) {
         let ([counter, sentinel1, sentinel2], scratch_track) = scratch_track.split_3();
         self.inc_at(sentinel1);
@@ -1205,11 +1209,11 @@ impl<'c> Cpu<'c> {
         scratch_track: ScratchTrack,
         init: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
         f: impl for<'a> FnOnce(&'a mut Cpu, Pos, ScratchTrack),
-        fin: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>
+        fin: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
     ) {
         let (sentinel1, scratch_track) = scratch_track.split_1();
         self.inc_at(sentinel1);
-        let scratch_track = scratch_track.get_split_scratch(register.size-1);
+        let scratch_track = scratch_track.get_split_scratch(register.size - 1);
         let (sentinel2, scratch_track_not) = scratch_track.split_1();
         let ([_, _, _, _], scratch_track) = scratch_track_not.split_4();
         if let Some(init) = init {
@@ -1218,8 +1222,10 @@ impl<'c> Cpu<'c> {
         self.inc_at(sentinel2);
         self.loop_while(sentinel2, |cpu| {
             cpu.dec();
-            f(cpu, register.at(register.size-1), scratch_track);
-            let cur_frame = cpu.cur_frame.expect("in foreach_byte: f() reset cur_frame!");
+            f(cpu, register.at(register.size - 1), scratch_track);
+            let cur_frame = cpu
+                .cur_frame
+                .expect("in foreach_byte: f() reset cur_frame!");
             cpu.cur_frame = Some(cur_frame + 1);
             cpu.not(sentinel2, scratch_track_not);
         });
@@ -1237,11 +1243,16 @@ impl<'c> Cpu<'c> {
             |cpu, pos, _| {
                 cpu.clr_at(pos);
             },
-            None::<fn(&mut Cpu, ScratchTrack)>
+            None::<fn(&mut Cpu, ScratchTrack)>,
         )
     }
 
-    pub fn set_binregister(&mut self, register: BinRegister, val: BigUint, scratch_track: ScratchTrack) {
+    pub fn set_binregister(
+        &mut self,
+        register: BinRegister,
+        val: BigUint,
+        scratch_track: ScratchTrack,
+    ) {
         self.clr_binregister(register, scratch_track);
         let two = BigUint::from(2u64);
         let zero = BigUint::zero();
@@ -1261,24 +1272,33 @@ impl<'c> Cpu<'c> {
         }
     }
 
-    pub fn inc_binregister_raw(&mut self, bin_register: BinRegister, result_carry_pos: Option<Pos>, scratch_track: ScratchTrack) {
+    pub fn inc_binregister_raw(
+        &mut self,
+        bin_register: BinRegister,
+        result_carry_pos: Option<Pos>,
+        scratch_track: ScratchTrack,
+    ) {
         let (carry, scratch_track) = scratch_track.split_1();
         self.inc_at(carry);
         for i in (0..bin_register.size).rev() {
-            self.if_nonzero_else(carry, scratch_track,
+            self.if_nonzero_else(
+                carry,
+                scratch_track,
                 |cpu, scratch_track| {
                     cpu.clr_at(carry);
-                    cpu.if_nonzero_else(bin_register.at(i), scratch_track,
+                    cpu.if_nonzero_else(
+                        bin_register.at(i),
+                        scratch_track,
                         |cpu, _scratch_track| {
                             cpu.clr_at(bin_register.at(i));
                             cpu.inc_at(carry);
                         },
                         |cpu, _scratch_track| {
                             cpu.inc_at(bin_register.at(i));
-                        }
+                        },
                     );
                 },
-                |_, _| {}
+                |_, _| {},
             );
         }
         if let Some(result_carry_pos) = result_carry_pos {
@@ -1290,21 +1310,23 @@ impl<'c> Cpu<'c> {
 
     pub fn inc_binregister(&mut self, bin_register: BinRegister, scratch_track: ScratchTrack) {
         let ([byte_backup, sentinel1], scratch_track) = scratch_track.split_2();
-        let scratch_track = scratch_track.get_split_scratch(bin_register.size+1);
+        let scratch_track = scratch_track.get_split_scratch(bin_register.size + 1);
         let ([new_carry, carry], scratch_track) = scratch_track.split_2();
         self.moveadd_byte(bin_register.at_unchecked(-1), byte_backup);
         self.inc_at(sentinel1);
         self.inc_at(carry);
         self.loop_while(carry, |cpu| {
             cpu.dec();
-            cpu.if_nonzero_else(bin_register.at(bin_register.size-1), scratch_track,
+            cpu.if_nonzero_else(
+                bin_register.at(bin_register.size - 1),
+                scratch_track,
                 |cpu, _scratch_track| {
-                    cpu.clr_at(bin_register.at(bin_register.size-1));
+                    cpu.clr_at(bin_register.at(bin_register.size - 1));
                     cpu.inc_at(new_carry);
                 },
                 |cpu, _scratch_track| {
-                    cpu.inc_at(bin_register.at(bin_register.size-1));
-                }
+                    cpu.inc_at(bin_register.at(bin_register.size - 1));
+                },
             );
             cpu.goto(new_carry);
             cpu.cur_frame = Some(carry.frame);
@@ -1314,13 +1336,18 @@ impl<'c> Cpu<'c> {
         self.moveadd_byte(byte_backup, bin_register.at_unchecked(-1));
     }
 
-    pub fn move_unpack_byte_onto_zeros(&mut self, byte_pos: Pos, result_pos: Pos, scratch_track: ScratchTrack) -> BinRegister {
+    pub fn move_unpack_byte_onto_zeros(
+        &mut self,
+        byte_pos: Pos,
+        result_pos: Pos,
+        scratch_track: ScratchTrack,
+    ) -> BinRegister {
         let result_register = BinRegister {
             track: Track {
-                track_num: result_pos.track
+                track_num: result_pos.track,
             },
             size: 8,
-            offset: result_pos.frame
+            offset: result_pos.frame,
         };
         self.loop_while(byte_pos, |cpu| {
             cpu.dec_at(byte_pos);
@@ -1329,17 +1356,26 @@ impl<'c> Cpu<'c> {
         result_register
     }
 
-    pub fn unpack_register_onto_zeros(&mut self, register: Register, result_register: BinRegister, scratch_track: ScratchTrack) -> BinRegister {
+    pub fn unpack_register_onto_zeros(
+        &mut self,
+        register: Register,
+        result_register: BinRegister,
+        scratch_track: ScratchTrack,
+    ) -> BinRegister {
         assert_eq!(register.size * 8, result_register.size);
         let (scratch_pos, scratch_track) = scratch_track.split_1();
         for i in 0..register.size {
             self.copy_byte_autoscratch(register.at(i), scratch_pos, scratch_track);
-            self.move_unpack_byte_onto_zeros(scratch_pos, result_register.at(i*8), scratch_track);
+            self.move_unpack_byte_onto_zeros(scratch_pos, result_register.at(i * 8), scratch_track);
         }
         result_register
     }
 
-    pub fn print_binregister_in_binary(&mut self, binregister: BinRegister, scratch_track: ScratchTrack) {
+    pub fn print_binregister_in_binary(
+        &mut self,
+        binregister: BinRegister,
+        scratch_track: ScratchTrack,
+    ) {
         self.print_text("0b", scratch_track);
         self.foreach_byte_of_binregister(
             binregister,
@@ -1352,7 +1388,7 @@ impl<'c> Cpu<'c> {
                 cpu.out();
                 cpu.clr();
             },
-            None::<fn(&mut Cpu, ScratchTrack)>
+            None::<fn(&mut Cpu, ScratchTrack)>,
         );
     }
 
@@ -1361,17 +1397,19 @@ impl<'c> Cpu<'c> {
         register: BinRegister,
         scratch_track: ScratchTrack,
         if_nonzero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
-        if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)
+        if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
     ) {
         let ([acc, sentinel1], scratch_track) = scratch_track.split_2();
         self.inc_at(sentinel1);
-        let scratch_track = scratch_track.get_split_scratch(register.size-1);
+        let scratch_track = scratch_track.get_split_scratch(register.size - 1);
         let (sentinel2, scratch_track) = scratch_track.split_1();
         self.inc_at(sentinel2);
         self.loop_while(sentinel2, |cpu| {
             cpu.dec();
             let new_sentinel2 = sentinel2.get_shifted(-1);
-            cpu.if_nonzero_else(register.at(register.size-1), scratch_track,
+            cpu.if_nonzero_else(
+                register.at(register.size - 1),
+                scratch_track,
                 |cpu, _| {
                     cpu.inc_at(sentinel2);
                     cpu.goto(new_sentinel2);
@@ -1383,7 +1421,7 @@ impl<'c> Cpu<'c> {
                     cpu.go_clear_sentinel_right();
                     cpu.cur_frame = Some(sentinel2.frame);
                 },
-                |_, _| {}
+                |_, _| {},
             );
             cpu.goto(new_sentinel2);
             cpu.cur_frame = Some(sentinel2.frame);
@@ -1397,7 +1435,7 @@ impl<'c> Cpu<'c> {
         &mut self,
         reg1: BinRegister,
         reg2: BinRegister,
-        scratch_track: ScratchTrack
+        scratch_track: ScratchTrack,
     ) {
         assert_eq!(reg1.size, reg2.size);
         self.foreach_byte_of_binregister_rev(
@@ -1429,17 +1467,17 @@ impl<'c> Cpu<'c> {
                                     },
                                     |cpu, _| {
                                         cpu.set_byte(reg2.last_pos(), 0);
-                                    }
+                                    },
                                 );
                             },
                             |cpu, _| {
                                 cpu.set_byte(reg2.last_pos(), 1);
-                            }
+                            },
                         );
                     },
                     |cpu, _| {
                         cpu.set_byte(reg2.last_pos(), 0);
-                    }
+                    },
                 );
             },
             Some(|cpu: &mut Cpu, scratch_track: ScratchTrack| {

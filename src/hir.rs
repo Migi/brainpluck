@@ -6,16 +6,16 @@ use nom::{
     character::complete::{alphanumeric1 as alphanumeric, anychar, one_of},
     combinator::{complete, map, opt},
     error::{context, convert_error, ErrorKind, ParseError, VerboseError},
-    multi::{separated_list, many0, many1, fold_many1},
+    multi::{fold_many1, many0, many1, separated_list},
     number::complete::double,
     sequence::{delimited, preceded, separated_pair, terminated},
     Err, IResult,
 };
-use std::collections::HashMap;
 use num::BigUint;
 use num::Num;
+use std::collections::HashMap;
 
-#[derive(Debug,Copy,Clone,Eq,PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BinOpKind {
     Plus,
     Minus,
@@ -23,106 +23,106 @@ pub enum BinOpKind {
     Div,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct BinOp {
     pub args: Box<(Expr, Expr)>,
     pub kind: BinOpKind,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct FnCall {
     pub fn_name: String,
     pub args: Vec<Expr>,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Literal(BigUint),
     VarRef(String),
     BinOp(BinOp),
     FnCall(FnCall),
     Scope(Scope),
-    IfElse(Box<IfElse>)
+    IfElse(Box<IfElse>),
 }
 
-#[derive(Debug,Copy,Clone,Eq,PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum VarType {
     Unit,
     U8,
-    U32
+    U32,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct VarDecl {
     pub var_name: String,
     pub typ: VarType,
     pub init: Expr,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct VarAssign {
     pub var_name: String,
     pub expr: Expr,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct Scope {
     pub stmts: Vec<Stmt>,
-    pub final_expr: Option<Box<Expr>>
+    pub final_expr: Option<Box<Expr>>,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct IfMaybeElse {
     pub cond: Expr,
     pub if_true: Expr,
-    pub if_false: Option<Expr>
+    pub if_false: Option<Expr>,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct IfElse {
     pub cond: Expr,
     pub if_true: Expr,
-    pub if_false: Expr
+    pub if_false: Expr,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ReturnStmt {
-    pub expr: Expr
+    pub expr: Expr,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct WhileLoop {
     pub cond: Expr,
-    pub inner: Expr
+    pub inner: Expr,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expr(Expr),
     VarDecl(VarDecl),
     VarAssign(VarAssign),
     IfMaybeElse(IfMaybeElse),
     Return(ReturnStmt),
-    WhileLoop(WhileLoop)
+    WhileLoop(WhileLoop),
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct FnArgDecl {
     pub name: String,
-    pub typ: VarType
+    pub typ: VarType,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct FnDecl {
     pub name: String,
     pub args: Vec<FnArgDecl>,
     pub ret: VarType,
-    pub scope: Scope
+    pub scope: Scope,
 }
 
 #[derive(Debug)]
 pub struct Program {
-    pub fns: HashMap<String, FnDecl>
+    pub fns: HashMap<String, FnDecl>,
 }
 
 pub fn parse_hir<'a>(i: &'a str) -> Result<Program, nom::Err<VerboseError<&'a str>>> {
@@ -264,8 +264,8 @@ fn scope<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Scope, E> {
         i,
         Scope {
             stmts,
-            final_expr: final_expr.map(|e| Box::new(e))
-        }
+            final_expr: final_expr.map(|e| Box::new(e)),
+        },
     ))
 }
 
@@ -280,8 +280,8 @@ fn if_maybe_else<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, IfM
         IfMaybeElse {
             cond,
             if_true: Expr::Scope(if_true),
-            if_false: if_false.map(|s| Expr::Scope(s))
-        }
+            if_false: if_false.map(|s| Expr::Scope(s)),
+        },
     ))
 }
 
@@ -298,8 +298,8 @@ fn if_else<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, IfElse, E
         IfElse {
             cond,
             if_true: Expr::Scope(if_true),
-            if_false: Expr::Scope(if_false)
-        }
+            if_false: Expr::Scope(if_false),
+        },
     ))
 }
 
@@ -312,8 +312,8 @@ fn while_loop<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, WhileL
         i,
         WhileLoop {
             cond,
-            inner: Expr::Scope(inner)
-        }
+            inner: Expr::Scope(inner),
+        },
     ))
 }
 
@@ -333,8 +333,8 @@ fn var_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarDecl,
         VarDecl {
             var_name: var_name.to_owned(),
             typ,
-            init
-        }
+            init,
+        },
     ))
 }
 
@@ -348,8 +348,8 @@ fn var_assign<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarAss
         i,
         VarAssign {
             var_name: var_name.to_owned(),
-            expr
-        }
+            expr,
+        },
     ))
 }
 
@@ -357,12 +357,7 @@ fn return_stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Retur
     let (i, _) = ws(i)?;
     let (i, _) = tag("return")(i)?;
     let (i, expr) = expr(i)?;
-    Ok((
-        i,
-        ReturnStmt {
-            expr
-        }
-    ))
+    Ok((i, ReturnStmt { expr }))
 }
 
 fn stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Stmt, E> {
@@ -376,10 +371,7 @@ fn stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Stmt, E> {
     ))(i)?;
     let (i, _) = ws(i)?;
     let (i, _) = tag(";")(i)?;
-    Ok((
-        i,
-        stmt
-    ))
+    Ok((i, stmt))
 }
 
 fn fn_arg_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnArgDecl, E> {
@@ -391,8 +383,8 @@ fn fn_arg_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnArg
         i,
         FnArgDecl {
             name: arg_name.to_owned(),
-            typ
-        }
+            typ,
+        },
     ))
 }
 
@@ -405,7 +397,7 @@ fn fn_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnDecl, E
     let (i, args) = separated_list(preceded(ws, tag(",")), fn_arg_decl)(i)?;
     let (i, _) = ws(i)?;
     let (i, _) = tag(")")(i)?;
-    let (i, ret) = opt(preceded(preceded(ws, tag("->")),type_name))(i)?;
+    let (i, ret) = opt(preceded(preceded(ws, tag("->")), type_name))(i)?;
     let ret = ret.unwrap_or(VarType::Unit);
     let (i, scope) = scope(i)?;
     Ok((
@@ -414,27 +406,18 @@ fn fn_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnDecl, E
             name: fn_name.to_owned(),
             args,
             ret,
-            scope
-        }
+            scope,
+        },
     ))
 }
 
 fn program<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Program, E> {
-    let (i, fns) = fold_many1(
-        fn_decl,
-        HashMap::new(),
-        |mut fns, new_fn| {
-            if fns.contains_key(&new_fn.name) {
-                panic!("Double definition for function");
-            }
-            fns.insert(new_fn.name.clone(), new_fn);
-            fns
+    let (i, fns) = fold_many1(fn_decl, HashMap::new(), |mut fns, new_fn| {
+        if fns.contains_key(&new_fn.name) {
+            panic!("Double definition for function");
         }
-    )(i)?;
-    Ok((
-        i,
-        Program {
-            fns
-        }
-    ))
+        fns.insert(new_fn.name.clone(), new_fn);
+        fns
+    })(i)?;
+    Ok((i, Program { fns }))
 }

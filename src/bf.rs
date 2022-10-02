@@ -1,5 +1,5 @@
-use std::io::{Read, Write};
 use crate::{CpuConfig, TrackKind};
+use std::io::{Read, Write};
 
 pub enum BfOp {
     Left,
@@ -11,7 +11,7 @@ pub enum BfOp {
     Loop(Vec<BfOp>),
     DebugMessage(String),
     Crash(String),
-    Breakpoint
+    Breakpoint,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -106,7 +106,7 @@ pub enum RunOpError {
     PtrOutOfBounds,
     ReaderErr(std::io::Error),
     WriterErr(std::io::Error),
-    Crashed
+    Crashed,
 }
 
 impl BfState {
@@ -122,7 +122,7 @@ impl BfState {
         op: &BfOp,
         reader: &mut impl Read,
         writer: &mut impl Write,
-        cpu_config: Option<&CpuConfig>
+        cpu_config: Option<&CpuConfig>,
     ) -> Result<(), RunOpError> {
         match op {
             BfOp::Left => {
@@ -190,7 +190,7 @@ impl BfState {
             }
             BfOp::Crash(msg) => {
                 println!("{}", msg);
-                return Err(RunOpError::Crashed)
+                return Err(RunOpError::Crashed);
             }
             BfOp::Breakpoint => {
                 if let Some(cfg) = cpu_config {
@@ -206,7 +206,7 @@ impl BfState {
         ops: &[BfOp],
         reader: &mut impl Read,
         writer: &mut impl Write,
-        cpu_config: Option<&CpuConfig>
+        cpu_config: Option<&CpuConfig>,
     ) -> Result<(), RunOpError> {
         for op in ops {
             self.run_op(op, reader, writer, cpu_config)?;
@@ -221,9 +221,7 @@ impl BfState {
     }
 
     pub fn print_state(&self, cpu: &CpuConfig) {
-        let num_digits = |x: u8| {
-            x.to_string().chars().count()
-        };
+        let num_digits = |x: u8| x.to_string().chars().count();
         println!("CPU STATE:");
         let tracks = cpu.get_tracks();
         let num_tracks = tracks.len();
@@ -238,15 +236,20 @@ impl BfState {
                         if i == self.cell_ptr {
                             print_caret_at = Some(caret_i);
                         }
-                        caret_i += num_digits(self.cells[i])+2;
+                        caret_i += num_digits(self.cells[i]) + 2;
                         print!("{}, ", self.cells[i]);
                         i += num_tracks;
                     }
                     println!();
                     if let Some(print_caret_at) = print_caret_at {
-                        println!("{}^", std::iter::repeat(" ").take(print_caret_at).collect::<String>());
+                        println!(
+                            "{}^",
+                            std::iter::repeat(" ")
+                                .take(print_caret_at)
+                                .collect::<String>()
+                        );
                     }
-                },
+                }
                 TrackKind::Scratch(track) => {
                     let mut i = track.track.track_num as usize;
                     let mut caret_i = 0;
@@ -255,15 +258,20 @@ impl BfState {
                         if i == self.cell_ptr {
                             print_caret_at = Some(caret_i);
                         }
-                        caret_i += num_digits(self.cells[i])+2;
+                        caret_i += num_digits(self.cells[i]) + 2;
                         print!("{}, ", self.cells[i]);
                         i += num_tracks;
                     }
                     println!();
                     if let Some(print_caret_at) = print_caret_at {
-                        println!("{}^", std::iter::repeat(" ").take(print_caret_at).collect::<String>());
+                        println!(
+                            "{}^",
+                            std::iter::repeat(" ")
+                                .take(print_caret_at)
+                                .collect::<String>()
+                        );
                     }
-                },
+                }
                 _ => {
                     println!("Unknown type!");
                 }

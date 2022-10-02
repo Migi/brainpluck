@@ -3,10 +3,10 @@
 mod bf;
 mod cpu;
 mod hir;
-mod lir2bf;
-mod sam;
 mod hir2sam;
 mod linker;
+mod lir2bf;
+mod sam;
 
 extern crate nom;
 extern crate num;
@@ -17,10 +17,10 @@ use std::fmt::Debug;
 use crate::bf::*;
 use crate::cpu::*;
 use crate::hir::*;
-use crate::lir2bf::*;
-use crate::sam::*;
 use crate::hir2sam::*;
 use crate::linker::*;
+use crate::lir2bf::*;
+use crate::sam::*;
 
 fn print_err<T>(e: impl Debug) -> T {
     panic!("Error: {:?}", e)
@@ -81,7 +81,12 @@ fn mainc() {
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
-        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg))
+        .run_ops(
+            &ops,
+            &mut std::io::stdin(),
+            &mut std::io::stdout(),
+            Some(&cfg),
+        )
         .unwrap_or_else(print_err);
 }
 
@@ -93,8 +98,8 @@ fn maind() {
     let mut cpu = Cpu::new(&cfg);
 
     cpu.add_const_to_register(register, BigUint::from(103050u64), scratch);
-    cpu.add_const_to_register(register, BigUint::from( 20406u64), scratch);
-    
+    cpu.add_const_to_register(register, BigUint::from(20406u64), scratch);
+
     cpu.moveprint_byte(register.at(0), scratch);
     cpu.print_text(", ", scratch);
     cpu.moveprint_byte(register.at(1), scratch);
@@ -107,7 +112,12 @@ fn maind() {
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
-        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg))
+        .run_ops(
+            &ops,
+            &mut std::io::stdin(),
+            &mut std::io::stdout(),
+            Some(&cfg),
+        )
         .unwrap_or_else(print_err);
 }
 
@@ -125,7 +135,12 @@ fn maine() {
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
-        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg))
+        .run_ops(
+            &ops,
+            &mut std::io::stdin(),
+            &mut std::io::stdout(),
+            Some(&cfg),
+        )
         .unwrap_or_else(print_err);
 
     // should print 0x0001E240
@@ -152,12 +167,17 @@ fn main() {
     let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
-    let result = state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg));
+    let result = state.run_ops(
+        &ops,
+        &mut std::io::stdin(),
+        &mut std::io::stdout(),
+        Some(&cfg),
+    );
     println!("");
     match result {
         Ok(()) => {
             println!("Ran successfully");
-        },
+        }
         Err(e) => {
             println!("Error: {:?}", e);
         }
@@ -218,7 +238,7 @@ mod test {
         let mut cpu = Cpu::new(&cfg);
 
         cpu.add_const_to_register(register, BigUint::from(103050u64), scratch);
-        cpu.add_const_to_register(register, BigUint::from( 20406u64), scratch);
+        cpu.add_const_to_register(register, BigUint::from(20406u64), scratch);
 
         cpu.moveprint_byte(register.at(0), scratch);
         cpu.print_text(", ", scratch);
@@ -253,7 +273,11 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.add_const_to_register(register, BigUint::from(0b111111111101010101010101u64), scratch);
+        cpu.add_const_to_register(
+            register,
+            BigUint::from(0b111111111101010101010101u64),
+            scratch,
+        );
         cpu.unpack_register_onto_zeros(register, binregister, scratch);
         cpu.print_binregister_in_binary(binregister, scratch);
 
@@ -268,7 +292,11 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(binregister, BigUint::from(0b1000000000000000000000u64), scratch);
+        cpu.set_binregister(
+            binregister,
+            BigUint::from(0b1000000000000000000000u64),
+            scratch,
+        );
         cpu.if_binregister_nonzero_else(
             binregister,
             scratch,
@@ -278,7 +306,7 @@ mod test {
             },
             |cpu, _| {
                 cpu.crash("oh no");
-            }
+            },
         );
         cpu.clr_binregister(binregister, scratch);
         cpu.if_binregister_nonzero_else(
@@ -289,7 +317,7 @@ mod test {
             },
             |cpu, scratch| {
                 cpu.print_text("1", scratch);
-            }
+            },
         );
 
         test_lir_prog(&cpu.into_ops(), "", "11");
