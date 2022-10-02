@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use crate::{CpuConfig, TrackKind};
 
 pub enum BfOp {
     Left,
@@ -8,6 +9,9 @@ pub enum BfOp {
     In,
     Out,
     Loop(Vec<BfOp>),
+    DebugMessage(String),
+    Crash(String),
+    Breakpoint
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -102,12 +106,13 @@ pub enum RunOpError {
     PtrOutOfBounds,
     ReaderErr(std::io::Error),
     WriterErr(std::io::Error),
+    Crashed
 }
 
 impl BfState {
     pub fn new() -> BfState {
         BfState {
-            cells: vec![0; 1000],
+            cells: vec![0; 1],
             cell_ptr: 0,
         }
     }
@@ -117,6 +122,7 @@ impl BfState {
         op: &BfOp,
         reader: &mut impl Read,
         writer: &mut impl Write,
+        cpu_config: Option<&CpuConfig>
     ) -> Result<(), RunOpError> {
         match op {
             BfOp::Left => {
@@ -176,7 +182,19 @@ impl BfState {
             }
             BfOp::Loop(ops) => {
                 while self.cells[self.cell_ptr] != 0 {
-                    self.run_ops(ops, reader, writer)?;
+                    self.run_ops(ops, reader, writer, cpu_config)?;
+                }
+            }
+            BfOp::DebugMessage(msg) => {
+                println!("{}", msg);
+            }
+            BfOp::Crash(msg) => {
+                println!("{}", msg);
+                return Err(RunOpError::Crashed)
+            }
+            BfOp::Breakpoint => {
+                if let Some(cfg) = cpu_config {
+                    self.print_state(cfg);
                 }
             }
         }
@@ -188,11 +206,69 @@ impl BfState {
         ops: &[BfOp],
         reader: &mut impl Read,
         writer: &mut impl Write,
+        cpu_config: Option<&CpuConfig>
     ) -> Result<(), RunOpError> {
         for op in ops {
-            self.run_op(op, reader, writer)?;
+            self.run_op(op, reader, writer, cpu_config)?;
         }
         Ok(())
+    }
+
+    pub fn print_tape(&self) {
+        for cell in &self.cells {
+            print!("{}, ", cell);
+        }
+    }
+
+    pub fn print_state(&self, cpu: &CpuConfig) {
+        let num_digits = |x: u8| {
+            x.to_string().chars().count()
+        };
+        println!("CPU STATE:");
+        let tracks = cpu.get_tracks();
+        let num_tracks = tracks.len();
+        for (id, track) in tracks {
+            println!("Track {:?}:", id);
+            match track {
+                TrackKind::Data(track) => {
+                    let mut i = track.track_num as usize;
+                    let mut caret_i = 0;
+                    let mut print_caret_at = None;
+                    while i < self.cells.len() {
+                        if i == self.cell_ptr {
+                            print_caret_at = Some(caret_i);
+                        }
+                        caret_i += num_digits(self.cells[i])+2;
+                        print!("{}, ", self.cells[i]);
+                        i += num_tracks;
+                    }
+                    println!();
+                    if let Some(print_caret_at) = print_caret_at {
+                        println!("{}^", std::iter::repeat(" ").take(print_caret_at).collect::<String>());
+                    }
+                },
+                TrackKind::Scratch(track) => {
+                    let mut i = track.track.track_num as usize;
+                    let mut caret_i = 0;
+                    let mut print_caret_at = None;
+                    while i < self.cells.len() {
+                        if i == self.cell_ptr {
+                            print_caret_at = Some(caret_i);
+                        }
+                        caret_i += num_digits(self.cells[i])+2;
+                        print!("{}, ", self.cells[i]);
+                        i += num_tracks;
+                    }
+                    println!();
+                    if let Some(print_caret_at) = print_caret_at {
+                        println!("{}^", std::iter::repeat(" ").take(print_caret_at).collect::<String>());
+                    }
+                },
+                _ => {
+                    println!("Unknown type!");
+                }
+            }
+        }
     }
 }
 
@@ -222,6 +298,15 @@ pub fn ops2str(ops: &Vec<BfOp>) -> String {
                     *result += "[";
                     rec(ops, result);
                     *result += "]";
+                }
+                BfOp::DebugMessage(_msg) => {
+                    *result += "#";
+                }
+                BfOp::Crash(_msg) => {
+                    *result += "!";
+                }
+                BfOp::Breakpoint => {
+                    *result += "$";
                 }
             }
         }

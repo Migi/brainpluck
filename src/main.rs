@@ -35,7 +35,7 @@ fn maina() {
     let prog = parse_bf(&contents).unwrap_or_else(print_err);
     let mut state = BfState::new();
     state
-        .run_ops(&prog, &mut std::io::stdin(), &mut std::io::stdout())
+        .run_ops(&prog, &mut std::io::stdin(), &mut std::io::stdout(), None)
         .unwrap_or_else(print_err);
 }
 
@@ -74,19 +74,19 @@ fn mainc() {
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
-    cpu.add_const_to_byte(data.at(0), 234);
+    cpu.set_byte(data.at(0), 234);
     cpu.moveprint_byte(data.at(0), scratch);
 
     let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
-        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout())
+        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg))
         .unwrap_or_else(print_err);
 }
 
 #[allow(unused)]
-fn main() {
+fn maind() {
     let mut cfg = CpuConfig::new();
     let register = cfg.add_register_track(TrackId::Register1, 4);
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
@@ -107,7 +107,7 @@ fn main() {
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
-        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout())
+        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg))
         .unwrap_or_else(print_err);
 }
 
@@ -125,10 +125,65 @@ fn maine() {
     println!("{}", ops2str(&ops));
     let mut state = BfState::new();
     state
-        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout())
+        .run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg))
         .unwrap_or_else(print_err);
 
     // should print 0x0001E240
+}
+
+#[allow(unused)]
+fn main() {
+    let mut cfg = CpuConfig::new();
+    let mut register_builder = cfg.build_register_track(TrackId::Register1);
+    let register = register_builder.add_register(4);
+    let binregister = register_builder.add_binregister(32);
+    let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+    let mut cpu = Cpu::new(&cfg);
+
+    //cpu.add_const_to_register(register, BigUint::from(0b111111111101010101010101u64), scratch);
+    //cpu.unpack_register_onto_zeros(register, binregister, scratch);
+    cpu.set_binregister(binregister, BigUint::from(0b111111111101010101010101u64), scratch);
+    cpu.print_binregister_in_binary(binregister, scratch);
+    cpu.print_newline(scratch);
+    cpu.if_binregister_nonzero_else(
+        binregister,
+        scratch,
+        |cpu, scratch| {
+            cpu.breakpoint();
+            cpu.print_text("1", scratch);
+        },
+        |cpu, _| {
+            cpu.crash("oh no");
+        }
+    );
+    cpu.clr_binregister(binregister, scratch);
+    cpu.print_binregister_in_binary(binregister, scratch);
+    cpu.print_newline(scratch);
+    cpu.if_binregister_nonzero_else(
+        binregister,
+        scratch,
+        |cpu, _| {
+            cpu.crash("oh no");
+        },
+        |cpu, scratch| {
+            cpu.print_text("1", scratch);
+        }
+    );
+
+    let ops = lir2bf(&cpu.into_ops());
+    println!("{}", ops2str(&ops));
+    let mut state = BfState::new();
+    let result = state.run_ops(&ops, &mut std::io::stdin(), &mut std::io::stdout(), Some(&cfg));
+    println!("");
+    match result {
+        Ok(()) => {
+            println!("Ran successfully");
+        },
+        Err(e) => {
+            println!("Error: {:?}", e);
+        }
+    }
+    state.print_state(&cfg);
 }
 
 #[cfg(test)]
@@ -140,7 +195,7 @@ mod test {
         let mut r = i.as_bytes();
         let mut w = Vec::new();
         state
-            .run_ops(&prog, &mut r, &mut w)
+            .run_ops(&prog, &mut r, &mut w, None)
             .unwrap_or_else(print_err);
         assert_eq!(w, o.as_bytes());
     }
@@ -208,5 +263,56 @@ mod test {
         cpu.moveprint_register_hex(register, scratch);
 
         test_lir_prog(&cpu.into_ops(), "", "0x0001E240");
+    }
+
+    #[test]
+    fn test_unpack_and_print_register() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let register = register_builder.add_register(4);
+        let binregister = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.add_const_to_register(register, BigUint::from(0b111111111101010101010101u64), scratch);
+        cpu.unpack_register_onto_zeros(register, binregister, scratch);
+        cpu.print_binregister_in_binary(binregister, scratch);
+
+        test_lir_prog(&cpu.into_ops(), "", "0b00000000111111111101010101010101");
+    }
+
+    #[test]
+    fn test_ifzero_binregister() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let binregister = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_binregister(binregister, BigUint::from(0b1000000000000000000000u64), scratch);
+        cpu.if_binregister_nonzero_else(
+            binregister,
+            scratch,
+            |cpu, scratch| {
+                cpu.breakpoint();
+                cpu.print_text("1", scratch);
+            },
+            |cpu, _| {
+                cpu.crash("oh no");
+            }
+        );
+        cpu.clr_binregister(binregister, scratch);
+        cpu.if_binregister_nonzero_else(
+            binregister,
+            scratch,
+            |cpu, _| {
+                cpu.crash("oh no");
+            },
+            |cpu, scratch| {
+                cpu.print_text("1", scratch);
+            }
+        );
+
+        test_lir_prog(&cpu.into_ops(), "", "11");
     }
 }

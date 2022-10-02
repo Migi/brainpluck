@@ -26,6 +26,15 @@ pub fn lir2bf(ops: &Vec<Lir>) -> Vec<BfOp> {
             Lir::Loop(ops) => {
                 result.push(BfOp::Loop(lir2bf(ops)));
             }
+            Lir::DebugMessage(str) => {
+                result.push(BfOp::DebugMessage(str.clone()));
+            }
+            Lir::Crash(str) => {
+                result.push(BfOp::Crash(str.clone()));
+            }
+            Lir::Breakpoint => {
+                result.push(BfOp::Breakpoint);
+            }
         }
     }
     result
