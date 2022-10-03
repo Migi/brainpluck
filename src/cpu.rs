@@ -444,59 +444,67 @@ impl<'c> Cpu<'c> {
         self.shift_cursor_untracked(shift * self.cfg.frame_size());
     }
 
-    pub fn go_clear_sentinel_left(&mut self) {
+    pub fn go_clear_sentinel_left(&mut self, landing_pos: Pos) {
+        assert_eq!(self.cur_track, landing_pos.track);
         self.dec();
         self.raw_loop(|cpu| {
             cpu.inc();
             cpu.shift_frame_untracked(-1);
             cpu.dec();
         });
+        self.cur_frame = Some(landing_pos.frame);
     }
 
-    pub fn go_clear_sentinel_right(&mut self) {
+    pub fn go_clear_sentinel_right(&mut self, landing_pos: Pos) {
+        assert_eq!(self.cur_track, landing_pos.track);
         self.dec();
         self.raw_loop(|cpu| {
             cpu.inc();
             cpu.shift_frame_untracked(1);
             cpu.dec();
         });
+        self.cur_frame = Some(landing_pos.frame);
     }
 
-    pub fn goto_sentinel_left(&mut self) {
-        self.go_clear_sentinel_left();
+    pub fn goto_sentinel_left(&mut self, landing_pos: Pos) {
+        self.go_clear_sentinel_left(landing_pos);
         self.inc();
     }
 
-    pub fn goto_sentinel_right(&mut self) {
-        self.go_clear_sentinel_right();
+    pub fn goto_sentinel_right(&mut self, landing_pos: Pos) {
+        self.go_clear_sentinel_right(landing_pos);
         self.inc();
     }
 
-    pub fn go_clear_downsentinel_left(&mut self) {
+    pub fn go_clear_downsentinel_left(&mut self, landing_pos: Pos) {
+        assert_eq!(self.cur_track, landing_pos.track);
         self.inc();
         self.raw_loop(|cpu| {
             cpu.dec();
             cpu.shift_frame_untracked(-1);
             cpu.inc();
         });
+        self.cur_frame = Some(landing_pos.frame);
     }
 
-    pub fn go_clear_downsentinel_right(&mut self) {
+    pub fn go_clear_downsentinel_right(&mut self, landing_pos: Pos) {
+        assert_eq!(self.cur_track, landing_pos.track);
         self.inc();
         self.raw_loop(|cpu| {
             cpu.dec();
             cpu.shift_frame_untracked(1);
             cpu.inc();
         });
+        self.cur_frame = Some(landing_pos.frame);
     }
 
-    pub fn goto_downsentinel_left(&mut self) {
-        self.go_clear_downsentinel_left();
+    pub fn goto_downsentinel_left(&mut self, landing_pos: Pos) {
+        self.go_clear_downsentinel_left(landing_pos);
         self.dec();
     }
 
-    pub fn goto_downsentinel_right(&mut self) {
-        self.go_clear_downsentinel_right();
+    pub fn goto_downsentinel_right(&mut self, landing_pos: Pos) {
+        self.go_clear_downsentinel_right(landing_pos);
         self.dec();
     }
 
@@ -1049,15 +1057,14 @@ impl<'c> Cpu<'c> {
                     cpu.raw_loop(|cpu| {
                         cpu.dec_at(carry_track.at(x - 1));
                         cpu.goto(sentinel_track.at(x - 1));
-                        cpu.goto_sentinel_left();
+                        cpu.goto_sentinel_left(sentinel_track.at(x - 1)); // ??
                         cpu.goto_track(b.track.track_num);
                     });
                     cpu.shift_frame_untracked(-1);
                     cpu.cur_frame = Some(carry_track.at(x).frame);
                 });
                 cpu.goto(sentinel_track.at(x + 1));
-                cpu.goto_sentinel_right();
-                cpu.cur_frame = Some(carry_track.at(i).frame);
+                cpu.goto_sentinel_right(carry_track.at(i));
             });
             self.dec_at(sentinel_track.at(i));
         }
@@ -1272,23 +1279,19 @@ impl<'c> Cpu<'c> {
         self.loop_while(counter, |cpu| {
             cpu.dec_at(counter);
             cpu.goto(sentinel2);
-            cpu.go_clear_sentinel_right();
-            cpu.cur_frame = Some(sentinel2.frame);
+            cpu.go_clear_sentinel_right(sentinel2);
             f(cpu, register.at(0), scratch_track);
             cpu.inc_at(sentinel2.get_shifted(1));
             cpu.goto(sentinel1);
-            cpu.goto_sentinel_left();
-            cpu.cur_frame = Some(sentinel1.frame);
+            cpu.goto_sentinel_left(sentinel1);
         });
         self.goto(sentinel2);
-        self.go_clear_sentinel_right();
-        self.cur_frame = Some(sentinel2.frame);
+        self.go_clear_sentinel_right(sentinel2);
         if let Some(fin) = fin {
             fin(self, scratch_track);
         }
         self.goto(sentinel1);
-        self.go_clear_sentinel_left();
-        self.cur_frame = Some(sentinel1.frame);
+        self.go_clear_sentinel_left(sentinel1);
     }
 
     /// In callbacks, the frame will shift every time, so if you want to keep scratch data
@@ -1345,23 +1348,19 @@ impl<'c> Cpu<'c> {
                 cpu.dec();
                 cpu.dec_at(sentinel1);
                 cpu.goto(sentinel1.get_shifted(1));
-                cpu.goto_sentinel_right();
-                cpu.cur_frame = Some(sentinel2.frame);
+                cpu.goto_sentinel_right(sentinel2);
                 cpu.inc_at(val);
                 cpu.goto(sentinel2.get_shifted(-1));
-                cpu.go_clear_downsentinel_left();
-                cpu.cur_frame = Some(sentinel1.frame);
+                cpu.go_clear_downsentinel_left(sentinel1);
             });
             cpu.moveadd_byte(backup_pos, register.at(0));
             cpu.dec_at(sentinel1);
             cpu.goto(sentinel1.get_shifted(1));
-            cpu.goto_sentinel_right();
-            cpu.cur_frame = Some(sentinel2.frame);
+            cpu.goto_sentinel_right(sentinel2);
             f(cpu, val, scratch_track);
             cpu.clr_at(val);
             cpu.goto(sentinel2.get_shifted(-1));
-            cpu.go_clear_downsentinel_left();
-            cpu.cur_frame = Some(sentinel1.frame);
+            cpu.go_clear_downsentinel_left(sentinel1);
             cpu.dec_at(sentinel1.get_shifted(1));
             cpu.goto(sentinel1.get_shifted(1));
             cpu.cur_frame = Some(sentinel1.frame);
@@ -1390,23 +1389,19 @@ impl<'c> Cpu<'c> {
                 cpu.dec();
                 cpu.dec_at(sentinel2);
                 cpu.goto(sentinel2.get_shifted(-1));
-                cpu.goto_sentinel_left();
-                cpu.cur_frame = Some(sentinel1.frame);
+                cpu.goto_sentinel_left(sentinel1);
                 cpu.inc_at(val);
                 cpu.goto(sentinel1.get_shifted(1));
-                cpu.go_clear_downsentinel_right();
-                cpu.cur_frame = Some(sentinel2.frame);
+                cpu.go_clear_downsentinel_right(sentinel2);
             });
             cpu.moveadd_byte(backup_pos, register.last_pos());
             cpu.dec_at(sentinel2);
             cpu.goto(sentinel2.get_shifted(-1));
-            cpu.goto_sentinel_left();
-            cpu.cur_frame = Some(sentinel1.frame);
+            cpu.goto_sentinel_left(sentinel1);
             f(cpu, val, scratch_track);
             cpu.clr_at(val);
             cpu.goto(sentinel1.get_shifted(1));
-            cpu.go_clear_downsentinel_right();
-            cpu.cur_frame = Some(sentinel2.frame);
+            cpu.go_clear_downsentinel_right(sentinel2);
             cpu.dec_at(sentinel2.get_shifted(-1));
             cpu.goto(sentinel2.get_shifted(-1));
             cpu.cur_frame = Some(sentinel2.frame);
@@ -1510,8 +1505,7 @@ impl<'c> Cpu<'c> {
             cpu.goto(new_carry);
             cpu.cur_frame = Some(carry.frame);
         });
-        self.go_clear_sentinel_left();
-        self.cur_frame = Some(sentinel1.frame);
+        self.go_clear_sentinel_left(sentinel1);
         self.moveadd_byte(byte_backup, bin_register.at_unchecked(-1));
     }
 
@@ -1592,12 +1586,10 @@ impl<'c> Cpu<'c> {
                 |cpu, _| {
                     cpu.inc_at(sentinel2);
                     cpu.goto(new_sentinel2);
-                    cpu.goto_sentinel_left();
-                    cpu.cur_frame = Some(sentinel1.frame);
+                    cpu.goto_sentinel_left(sentinel1);
                     cpu.inc_at(acc);
                     cpu.goto(sentinel1.get_shifted(1));
-                    cpu.go_clear_sentinel_right();
-                    cpu.cur_frame = Some(sentinel2.frame);
+                    cpu.go_clear_sentinel_right(sentinel2);
                 },
                 |_, _| {},
             );
@@ -1742,6 +1734,24 @@ impl<'c> Cpu<'c> {
         );
     }
 
+    pub fn shift_binregister_right(&mut self, register: BinRegister, scratch_track: ScratchTrack) {
+        self.foreach_pos_of_binregister(
+            register,
+            scratch_track,
+            None::<fn(&mut Cpu, ScratchTrack)>,
+            |cpu, pos, scratch_track| {
+                let (cpy, _) = scratch_track.split_1();
+                let newcpy = cpy.get_shifted(1);
+                cpu.moveadd_byte(pos, newcpy);
+                cpu.moveadd_byte(cpy, pos);
+            },
+            Some(|cpu: &mut Cpu, scratch_track: ScratchTrack| {
+                let (cpy, _) = scratch_track.split_1();
+                cpu.clr_at(cpy);
+            }),
+        );
+    }
+
     pub fn copy_binregister(
         &mut self,
         from: BinRegister,
@@ -1760,6 +1770,25 @@ impl<'c> Cpu<'c> {
                 cpu.copy_byte_autoscratch(pos, to.at(0), scratch_track);
             },
             None::<fn(&mut Cpu, ScratchTrack)>,
+        );
+    }
+    pub fn cmp_binregister(
+        &mut self,
+        register: BinRegister,
+        scratch_track: ScratchTrack,
+        if_lt_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+        if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+        if_gt_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+    ) {
+        self.if_nonzero_else(
+            register.at(0),
+            scratch_track,
+            |cpu, scratch_track| {
+                if_lt_zero(cpu, scratch_track)
+            },
+            |cpu, scratch_track| {
+                cpu.if_binregister_nonzero_else(register, scratch_track, if_gt_zero, if_zero)
+            },
         );
     }
 
@@ -1785,6 +1814,17 @@ impl<'c> Cpu<'c> {
             );
             cpu.shift_binregister_left(a_shifted, scratch_track);
         });
+    }
+
+    /// Adds a/b to out
+    pub fn div_binregisters(
+        &mut self,
+        a: BinRegister,
+        b: BinRegister,
+        div: BinRegister,
+        rem: BinRegister,
+        scratch_track: ScratchTrack,
+    ) {
     }
 
     /*/// b -= a

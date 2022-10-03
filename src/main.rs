@@ -378,6 +378,25 @@ mod test {
     }
 
     #[test]
+    fn test_shift_binregisters_right() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let reg1 = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_binregister(
+            reg1,
+            BigUint::from(0b01000110011010000010110110101101u64),
+            scratch,
+        );
+        cpu.shift_binregister_right(reg1, scratch);
+        cpu.print_binregister_in_binary(reg1, scratch);
+
+        test_lir_prog(&cpu.into_ops(), "", "0b00100011001101000001011011010110");
+    }
+
+    #[test]
     fn test_mul_binregisters() {
         let mut cfg = CpuConfig::new();
         let mut register_builder = cfg.build_register_track(TrackId::Register1);
