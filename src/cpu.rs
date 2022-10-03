@@ -15,6 +15,7 @@ pub enum Lir {
     DebugMessage(String),
     Crash(String),
     Breakpoint,
+    CheckScratchIsEmptyFromHere(String),
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -85,6 +86,15 @@ impl BinRegister {
 
     pub fn at_unchecked(&self, frame: isize) -> Pos {
         self.track.at(frame + self.offset)
+    }
+
+    pub fn subview(&self, offset: isize, size: isize) -> BinRegister {
+        assert!(offset + size <= self.size);
+        BinRegister {
+            track: self.track,
+            size,
+            offset: self.offset + offset,
+        }
     }
 }
 
@@ -403,6 +413,11 @@ impl<'c> Cpu<'c> {
 
     pub fn breakpoint(&mut self) {
         self.lir.push(Lir::Breakpoint);
+    }
+
+    pub fn check_scratch(&mut self, scratch_track: ScratchTrack, msg: impl Into<String>) {
+        self.goto(scratch_track.split_1().0);
+        self.lir.push(Lir::CheckScratchIsEmptyFromHere(msg.into()));
     }
 
     pub fn inc_at(&mut self, pos: Pos) {
@@ -1599,6 +1614,7 @@ impl<'c> Cpu<'c> {
         });
         self.cur_frame = Some(sentinel1.frame);
         self.if_nonzero_else(acc, scratch_track, if_nonzero, if_zero);
+        self.clr_at(acc);
     }
 
     pub fn add_binregister_to_binregister(
@@ -1783,9 +1799,7 @@ impl<'c> Cpu<'c> {
         self.if_nonzero_else(
             register.at(0),
             scratch_track,
-            |cpu, scratch_track| {
-                if_lt_zero(cpu, scratch_track)
-            },
+            |cpu, scratch_track| if_lt_zero(cpu, scratch_track),
             |cpu, scratch_track| {
                 cpu.if_binregister_nonzero_else(register, scratch_track, if_gt_zero, if_zero)
             },
@@ -1825,6 +1839,39 @@ impl<'c> Cpu<'c> {
         rem: BinRegister,
         scratch_track: ScratchTrack,
     ) {
+        assert_eq!(a.size, b.size);
+        let w = a.size;
+        let (rem2, scratch_track) = scratch_track.split_binregister(w * 2);
+        self.copy_binregister(a, rem2.subview(w, w), scratch_track, false);
+        let (b_shifted, scratch_track) = scratch_track.split_binregister(w * 2);
+        self.copy_binregister(b, b_shifted.subview(1, w), scratch_track, false);
+        let (cur_digit, scratch_track) = scratch_track.split_binregister(w);
+        self.inc_at(cur_digit.at(0));
+        let (counter, scratch_track) = scratch_track.split_1();
+        self.set_byte(counter, w as u8);
+        self.loop_while(counter, |cpu| {
+            cpu.dec();
+            cpu.sub_binregister_from_binregister(b_shifted, rem2, scratch_track);
+            cpu.cmp_binregister(
+                rem2,
+                scratch_track,
+                |cpu, scratch_track| {
+                    cpu.add_binregister_to_binregister(b_shifted, rem2, scratch_track);
+                },
+                |cpu, scratch_track| {
+                    cpu.add_binregister_to_binregister(cur_digit, div, scratch_track);
+                },
+                |cpu, scratch_track| {
+                    cpu.add_binregister_to_binregister(cur_digit, div, scratch_track);
+                },
+            );
+            cpu.shift_binregister_right(b_shifted, scratch_track);
+            cpu.shift_binregister_right(cur_digit, scratch_track);
+        });
+        self.add_binregister_to_binregister(rem2.subview(w, w), rem, scratch_track);
+        self.clr_binregister(rem2, scratch_track);
+        self.clr_binregister(b_shifted, scratch_track);
+        self.clr_at(cur_digit.last_pos());
     }
 
     /*/// b -= a

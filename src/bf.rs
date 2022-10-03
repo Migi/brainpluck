@@ -12,6 +12,7 @@ pub enum BfOp {
     DebugMessage(String),
     Crash(String),
     Breakpoint,
+    CheckScratchIsEmptyFromHere(String),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -107,6 +108,7 @@ pub enum RunOpError {
     ReaderErr(std::io::Error),
     WriterErr(std::io::Error),
     Crashed,
+    Other(String),
 }
 
 impl BfState {
@@ -197,6 +199,23 @@ impl BfState {
                     self.print_state(cfg);
                 }
             }
+            BfOp::CheckScratchIsEmptyFromHere(msg) => {
+                if let Some(cfg) = cpu_config {
+                    let num_tracks = cfg.get_tracks().len();
+                    let mut i = self.cell_ptr;
+                    while i < self.cells.len() {
+                        if self.cells[i] != 0 {
+                            return Err(RunOpError::Other(format!(
+                                "CheckScratchIsEmptyFromHere: Not empty at index {}, value {}. Message: {}",
+                                i, self.cells[i], msg
+                            )));
+                        }
+                        i += num_tracks;
+                    }
+                } else {
+                    panic!("Called CheckScratchIsEmptyFromHere without cpu config!");
+                }
+            }
         }
         Ok(())
     }
@@ -278,6 +297,28 @@ impl BfState {
             }
         }
     }
+
+    pub fn check_scratch_is_empty(&self, cpu: &CpuConfig) {
+        let tracks = cpu.get_tracks();
+        let num_tracks = tracks.len();
+        for (id, track) in tracks {
+            match track {
+                TrackKind::Scratch(track) => {
+                    let mut i = track.track.track_num as usize;
+                    while i < self.cells.len() {
+                        if self.cells[i] != 0 {
+                            panic!(
+                                "Scratch {:?} is not zero! at position {}: value {}",
+                                id, i, self.cells[i]
+                            );
+                        }
+                        i += num_tracks;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 pub fn ops2str(ops: &Vec<BfOp>) -> String {
@@ -315,6 +356,9 @@ pub fn ops2str(ops: &Vec<BfOp>) -> String {
                 }
                 BfOp::Breakpoint => {
                     *result += "$";
+                }
+                BfOp::CheckScratchIsEmptyFromHere(_msg) => {
+                    *result += "&";
                 }
             }
         }
