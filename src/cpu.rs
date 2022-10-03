@@ -1573,6 +1573,24 @@ impl<'c> Cpu<'c> {
         );
     }
 
+    pub fn shift_binregister_left(&mut self, register: BinRegister, scratch_track: ScratchTrack) {
+        self.foreach_byte_of_binregister_rev(
+            register,
+            scratch_track,
+            None::<fn(&mut Cpu, ScratchTrack)>,
+            |cpu, pos, scratch_track| {
+                let (cpy, scratch_track) = scratch_track.split_1();
+                let newcpy = cpy.get_shifted(-1);
+                cpu.moveadd_byte(pos, newcpy);
+                cpu.moveadd_byte(cpy, pos);
+            },
+            Some(|cpu: &mut Cpu, scratch_track: ScratchTrack| {
+                let (cpy, _) = scratch_track.split_1();
+                cpu.clr_at(cpy);
+            }),
+        );
+    }
+
     /*/// b -= a
     /// carry = 1 if b < a
     pub fn movesub_byte_with_carry(&mut self, a: Pos, b: Pos, carry: Pos, scratch: Pos) {
