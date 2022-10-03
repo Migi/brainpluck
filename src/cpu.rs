@@ -1845,33 +1845,59 @@ impl<'c> Cpu<'c> {
         self.copy_binregister(a, rem2.subview(w, w), scratch_track, false);
         let (b_shifted, scratch_track) = scratch_track.split_binregister(w * 2);
         self.copy_binregister(b, b_shifted.subview(1, w), scratch_track, false);
-        let (cur_digit, scratch_track) = scratch_track.split_binregister(w);
-        self.inc_at(cur_digit.at(0));
         let (counter, scratch_track) = scratch_track.split_1();
         self.set_byte(counter, w as u8);
         self.loop_while(counter, |cpu| {
             cpu.dec();
             cpu.sub_binregister_from_binregister(b_shifted, rem2, scratch_track);
+            let (should_add_digit, scratch_track) = scratch_track.split_1();
             cpu.cmp_binregister(
                 rem2,
                 scratch_track,
                 |cpu, scratch_track| {
                     cpu.add_binregister_to_binregister(b_shifted, rem2, scratch_track);
                 },
-                |cpu, scratch_track| {
-                    cpu.add_binregister_to_binregister(cur_digit, div, scratch_track);
+                |cpu, _| {
+                    cpu.inc_at(should_add_digit);
                 },
-                |cpu, scratch_track| {
-                    cpu.add_binregister_to_binregister(cur_digit, div, scratch_track);
+                |cpu, _| {
+                    cpu.inc_at(should_add_digit);
                 },
             );
+            cpu.if_nonzero_else(
+                should_add_digit,
+                scratch_track,
+                |cpu, scratch_track| {
+                    let (sentinel, scratch_track) = scratch_track.split_1();
+                    cpu.inc_at(sentinel);
+                    let (cur_digit, scratch_track) = scratch_track.split_binregister(w);
+                    cpu.copy_byte_autoscratch(counter, cur_digit.last_pos(), scratch_track);
+                    cpu.loop_while(cur_digit.last_pos(), |cpu| {
+                        cpu.dec();
+                        cpu.moveadd_byte(
+                            cur_digit.last_pos(),
+                            cur_digit.last_pos().get_shifted(-1),
+                        );
+                        cpu.goto(cur_digit.last_pos().get_shifted(-1));
+                        cpu.now_were_actually_at(cur_digit.last_pos());
+                    });
+                    cpu.inc();
+                    cpu.goto(cur_digit.last_pos().get_shifted(-1));
+                    cpu.go_clear_sentinel_left(sentinel);
+                    cpu.add_binregister_to_binregister(cur_digit, div, scratch_track);
+                    cpu.inc_at(sentinel);
+                    cpu.goto(sentinel.get_shifted(1));
+                    cpu.go_clear_sentinel_right(cur_digit.last_pos());
+                    cpu.go_clear_sentinel_left(sentinel);
+                },
+                |_, _| {}
+            );
+            cpu.clr_at(should_add_digit);
             cpu.shift_binregister_right(b_shifted, scratch_track);
-            cpu.shift_binregister_right(cur_digit, scratch_track);
         });
         self.add_binregister_to_binregister(rem2.subview(w, w), rem, scratch_track);
         self.clr_binregister(rem2, scratch_track);
         self.clr_binregister(b_shifted, scratch_track);
-        self.clr_at(cur_digit.last_pos());
     }
 
     /*/// b -= a

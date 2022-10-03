@@ -175,6 +175,7 @@ fn main() {
 
     let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
+    println!("Num instrs: {}", ops2str(&ops).chars().count());
     let mut state = BfState::new();
     let result = state.run_ops(
         &ops,
