@@ -758,7 +758,7 @@ impl<'c> Cpu<'c> {
         if_nonzero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
         if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
     ) {
-        let ([byte_cpy, one, zero, zero2], new_scratch) = scratch_track.split_4();
+        let ([zero, byte_cpy, one], new_scratch) = scratch_track.split_3();
         self.copy_byte(cond, byte_cpy, zero);
         self.inc_at(one);
         self.goto(byte_cpy);
@@ -771,13 +771,13 @@ impl<'c> Cpu<'c> {
         assert_eq!(self.cur_frame, None);
         assert_eq!(self.cur_track, scratch_track.track.track_num);
         self.shift_frame_untracked(1);
-        // now we're at one or zero2
+        // now we're at byte_cpy (which is now 0) or one
         self.raw_loop(move |cpu| {
             cpu.cur_frame = Some(one.frame);
             if_zero(cpu, new_scratch);
-            cpu.goto(zero2);
+            cpu.goto(byte_cpy);
         });
-        self.cur_frame = Some(zero2.frame);
+        self.cur_frame = Some(byte_cpy.frame);
         self.dec_at(one);
     }
 
