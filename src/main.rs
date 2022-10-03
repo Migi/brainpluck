@@ -157,12 +157,12 @@ fn main() {
 
     //cpu.add_const_to_register(register, BigUint::from(0b10101u64), scratch);
     //cpu.unpack_register_onto_zeros(register, binregister, scratch);
-    cpu.set_binregister(reg1, BigUint::from(789742058u64), scratch);
-    cpu.set_binregister(reg2, BigUint::from(391490498u64), scratch);
-    cpu.add_binregister_to_binregister(reg1, reg2, scratch);
+    cpu.set_binregister(reg1, BigUint::from(289742058u64), scratch);
+    cpu.set_binregister(reg2, BigUint::from(791490498u64), scratch);
+    cpu.sub_binregister_from_binregister(reg1, reg2, scratch);
     cpu.print_binregister_in_binary(reg2, scratch);
     cpu.print_newline(scratch);
-    cpu.print_text("0b01000110011010000010110110101100", scratch);
+    cpu.print_text("0b00011101111010000001001011011000", scratch);
 
     let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
@@ -338,5 +338,22 @@ mod test {
         cpu.print_binregister_in_binary(reg2, scratch);
 
         test_lir_prog(&cpu.into_ops(), "", "0b01000110011010000010110110101100");
+    }
+
+    #[test]
+    fn test_sub_binregisters() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let reg1 = register_builder.add_binregister(32);
+        let reg2 = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_binregister(reg1, BigUint::from(289742058u64), scratch);
+        cpu.set_binregister(reg2, BigUint::from(791490498u64), scratch);
+        cpu.sub_binregister_from_binregister(reg1, reg2, scratch);
+        cpu.print_binregister_in_binary(reg2, scratch);
+
+        test_lir_prog(&cpu.into_ops(), "", "0b00011101111010000001001011011000");
     }
 }

@@ -533,6 +533,28 @@ impl<'c> Cpu<'c> {
         best_pos
     }
 
+    /// Get a position on the scratch track which is near (but not the same as) a and/or b
+    pub fn get_autoscratch(&self, a: Pos, b: Pos, scratch_track: ScratchTrack) -> Pos {
+        let mut scratch = self.get_pos_on_track_between(a, b, scratch_track.track);
+        if let Some(l) = scratch_track.dont_go_left_of {
+            if scratch.frame < l {
+                scratch.frame = l;
+            }
+        }
+        if a == scratch {
+            scratch.frame += 1;
+            if b == scratch {
+                scratch.frame += 1;
+            }
+        } else if b == scratch {
+            scratch.frame += 1;
+            if a == scratch {
+                scratch.frame += 1;
+            }
+        }
+        scratch
+    }
+
     pub fn zero_byte(&mut self, pos: Pos) {
         self.loop_while(pos, |cpu| {
             cpu.dec();
@@ -624,7 +646,6 @@ impl<'c> Cpu<'c> {
     pub fn movesub_byte(&mut self, from: Pos, to: Pos) {
         if from == to {
             self.clr_at(from);
-            self.clr_at(to);
         }
         self.loop_while(from, |cpu| {
             cpu.dec();
@@ -805,28 +826,34 @@ impl<'c> Cpu<'c> {
         });
     }
 
+    pub fn sub_byte_from(&mut self, sub: Pos, from: Pos, scratch: Pos) {
+        if sub == from {
+            self.clr_at(sub);
+        }
+        assert!(sub != scratch);
+        assert!(from != scratch);
+        self.moveadd_byte(sub, scratch);
+        self.loop_while(scratch, |cpu| {
+            cpu.dec();
+            cpu.inc_at(sub);
+            cpu.dec_at(from);
+        });
+    }
+
     pub fn copy_byte_autoscratch(&mut self, from: Pos, to: Pos, scratch_track: ScratchTrack) {
         if from == to {
             return;
         }
-        let mut scratch = self.get_pos_on_track_between(from, to, scratch_track.track);
-        if let Some(l) = scratch_track.dont_go_left_of {
-            if scratch.frame < l {
-                scratch.frame = l;
-            }
-        }
-        if from == scratch {
-            scratch.frame += 1;
-            if to == scratch {
-                scratch.frame += 1;
-            }
-        } else if to == scratch {
-            scratch.frame += 1;
-            if from == scratch {
-                scratch.frame += 1;
-            }
-        }
+        let scratch = self.get_autoscratch(from, to, scratch_track);
         self.copy_byte(from, to, scratch);
+    }
+
+    pub fn sub_byte_autoscratch(&mut self, sub: Pos, from: Pos, scratch_track: ScratchTrack) {
+        if sub == from {
+            self.clr_at(sub);
+        }
+        let scratch = self.get_autoscratch(sub, from, scratch_track);
+        self.sub_byte_from(sub, from, scratch);
     }
 
     pub fn copy_slice(&mut self, slice: Pos, size: isize, to: Pos, scratch_track: ScratchTrack) {
@@ -1476,6 +1503,65 @@ impl<'c> Cpu<'c> {
                         );
                     },
                     |cpu, _| {
+                        cpu.set_byte(reg2.last_pos(), 0);
+                    },
+                );
+            },
+            Some(|cpu: &mut Cpu, scratch_track: ScratchTrack| {
+                let (carry, _) = scratch_track.split_1();
+                cpu.clr_at(carry);
+            }),
+        );
+    }
+
+    pub fn sub_binregister_from_binregister(
+        &mut self,
+        reg1: BinRegister,
+        reg2: BinRegister,
+        scratch_track: ScratchTrack,
+    ) {
+        assert_eq!(reg1.size, reg2.size);
+        self.foreach_byte_of_binregister_rev(
+            reg1,
+            scratch_track,
+            None::<fn(&mut Cpu, ScratchTrack)>,
+            |cpu, pos, scratch_track| {
+                let ([carry, acc], scratch_track) = scratch_track.split_2();
+                cpu.copy_byte_autoscratch(reg2.last_pos(), acc, scratch_track);
+                cpu.add_const_to_byte(acc, 2);
+                cpu.sub_byte_autoscratch(pos, acc, scratch_track);
+                cpu.movesub_byte(carry, acc);
+                let new_carry = carry.get_shifted(-1);
+                cpu.if_nonzero_else(
+                    acc,
+                    scratch_track,
+                    |cpu, scratch_track| {
+                        cpu.dec_at(acc);
+                        cpu.if_nonzero_else(
+                            acc,
+                            scratch_track,
+                            |cpu, scratch_track| {
+                                cpu.dec_at(acc);
+                                cpu.if_nonzero_else(
+                                    acc,
+                                    scratch_track,
+                                    |cpu, _| {
+                                        cpu.dec_at(acc);
+                                        cpu.set_byte(reg2.last_pos(), 1);
+                                    },
+                                    |cpu, _| {
+                                        cpu.set_byte(reg2.last_pos(), 0);
+                                    },
+                                );
+                            },
+                            |cpu, _| {
+                                cpu.set_byte(new_carry, 1);
+                                cpu.set_byte(reg2.last_pos(), 1);
+                            },
+                        );
+                    },
+                    |cpu, _| {
+                        cpu.set_byte(new_carry, 1);
                         cpu.set_byte(reg2.last_pos(), 0);
                     },
                 );
