@@ -151,20 +151,19 @@ fn main() {
     let mut cfg = CpuConfig::new();
     let mut register_builder = cfg.build_register_track(TrackId::Register1);
     let reg1 = register_builder.add_binregister(32);
+    let reg2 = register_builder.add_binregister(32);
+    let reg3 = register_builder.add_binregister(32);
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
     //cpu.add_const_to_register(register, BigUint::from(0b10101u64), scratch);
     //cpu.unpack_register_onto_zeros(register, binregister, scratch);
-    cpu.set_binregister(
-        reg1,
-        BigUint::from(0b01000110011010000010110110101100u64),
-        scratch,
-    );
-    cpu.shift_binregister_left(reg1, scratch);
-    cpu.print_binregister_in_binary(reg1, scratch);
+    cpu.set_binregister(reg1, BigUint::from(103050u64), scratch);
+    cpu.set_binregister(reg2, BigUint::from(1561594u64), scratch);
+    cpu.mul_binregisters(reg1, reg2, reg3, scratch);
+    cpu.print_binregister_in_binary(reg3, scratch);
     cpu.print_newline(scratch);
-    cpu.print_text("0b10001100110100000101101101011000", scratch);
+    cpu.print_text("0b01110111101101101101100011000100", scratch);
 
     let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
@@ -374,8 +373,25 @@ mod test {
         );
         cpu.shift_binregister_left(reg1, scratch);
         cpu.print_binregister_in_binary(reg1, scratch);
-        cpu.print_newline(scratch);
 
         test_lir_prog(&cpu.into_ops(), "", "0b10001100110100000101101101011000");
+    }
+
+    #[test]
+    fn test_mul_binregisters() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let reg1 = register_builder.add_binregister(32);
+        let reg2 = register_builder.add_binregister(32);
+        let reg3 = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_binregister(reg1, BigUint::from(103050u64), scratch);
+        cpu.set_binregister(reg2, BigUint::from(1561594u64), scratch);
+        cpu.mul_binregisters(reg1, reg2, reg3, scratch);
+        cpu.print_binregister_in_binary(reg3, scratch);
+
+        test_lir_prog(&cpu.into_ops(), "", "0b01110111101101101101100011000100");
     }
 }
