@@ -1841,10 +1841,10 @@ impl<'c> Cpu<'c> {
     ) {
         assert_eq!(a.size, b.size);
         let w = a.size;
-        let (rem2, scratch_track) = scratch_track.split_binregister(w * 2);
-        self.copy_binregister(a, rem2.subview(w, w), scratch_track, false);
-        let (b_shifted, scratch_track) = scratch_track.split_binregister(w * 2);
-        self.copy_binregister(b, b_shifted.subview(1, w), scratch_track, false);
+        let (rem2, scratch_track) = scratch_track.split_binregister(w * 2 - 1);
+        self.copy_binregister(a, rem2.subview(w-1, w), scratch_track, false);
+        let (b_shifted, scratch_track) = scratch_track.split_binregister(w * 2 - 1);
+        self.copy_binregister(b, b_shifted.subview(0, w), scratch_track, false);
         let (counter, scratch_track) = scratch_track.split_1();
         self.set_byte(counter, w as u8);
         self.loop_while(counter, |cpu| {
@@ -1895,7 +1895,7 @@ impl<'c> Cpu<'c> {
             cpu.clr_at(should_add_digit);
             cpu.shift_binregister_right(b_shifted, scratch_track);
         });
-        self.add_binregister_to_binregister(rem2.subview(w, w), rem, scratch_track);
+        self.add_binregister_to_binregister(rem2.subview(w-1, w), rem, scratch_track);
         self.clr_binregister(rem2, scratch_track);
         self.clr_binregister(b_shifted, scratch_track);
     }
