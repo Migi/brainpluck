@@ -78,7 +78,7 @@ fn mainc() {
     cpu.moveprint_byte(data.at(0), scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops));
+    println!("{}", ops2str(&ops, false));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -109,7 +109,7 @@ fn maind() {
     cpu.moveprint_byte(register.at(3), scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops));
+    println!("{}", ops2str(&ops, false));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -132,7 +132,7 @@ fn maine() {
     cpu.moveprint_register_hex(register, scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops));
+    println!("{}", ops2str(&ops, false));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -164,8 +164,9 @@ fn main() {
     cpu.print_binregister_in_decimal(a, scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops));
-    println!("Num instrs: {}", ops2str(&ops).chars().count());
+    let ops = get_optimized_bf_ops(&ops);
+    println!("{}", ops2str(&ops, true));
+    println!("Num instrs: {}", ops2str(&ops, false).chars().count());
     let mut state = BfState::new();
     let result = state.run_ops(
         &ops,
@@ -190,6 +191,7 @@ mod test {
     use super::*;
 
     fn test_parsed_bf_prog(prog: &Vec<BfOp>, i: &str, o: &str, cfg: Option<&CpuConfig>) {
+        let prog = get_optimized_bf_ops(prog);
         let mut state = BfState::new();
         let mut r = i.as_bytes();
         let mut w = Vec::new();
@@ -509,11 +511,6 @@ mod test {
         cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
         cpu.print_binregister_in_decimal(a, scratch);
 
-        test_lir_prog(
-            &cpu.into_ops(),
-            "",
-            "1037250132",
-            &cfg,
-        );
+        test_lir_prog(&cpu.into_ops(), "", "1037250132", &cfg);
     }
 }

@@ -2024,7 +2024,7 @@ impl<'c> Cpu<'c> {
                         cpu.out();
                         cpu.clr();
                     },
-                    |_, _| {}
+                    |_, _| {},
                 )
             },
             None::<fn(&mut Cpu, ScratchTrack)>,

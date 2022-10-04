@@ -1,6 +1,9 @@
 use crate::{CpuConfig, TrackKind};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 
+#[derive(Clone)]
 pub enum BfOp {
     Left,
     Right,
@@ -9,6 +12,11 @@ pub enum BfOp {
     In,
     Out,
     Loop(Vec<BfOp>),
+    Clr,
+    Move(i16),
+    Add(u8),
+    MoveAdd(i16),
+    MoveAdd2(i16, i16),
     DebugMessage(String),
     Crash(String),
     Breakpoint,
@@ -97,6 +105,176 @@ pub fn parse_bf(s: &str) -> Result<Vec<BfOp>, ParseBfProgError> {
     }
 }
 
+struct ShiftAdd {
+    shift: i16,
+    add: u8,
+}
+
+fn get_loop_as_shiftadds(ops: &Vec<BfOp>) -> Option<HashMap<i16, u8>> {
+    let mut shift_adds: HashMap<i16, u8> = HashMap::new();
+    let mut cur_shift = 0;
+    let mut encounter_add = |x: u8, shift: i16| match shift_adds.entry(shift) {
+        Entry::Occupied(e) => {
+            let new_add = e.get().wrapping_add(x);
+            *e.into_mut() = new_add;
+        }
+        Entry::Vacant(e) => {
+            e.insert(x);
+        }
+    };
+    for op in ops {
+        match op {
+            BfOp::Left => {
+                cur_shift -= 1;
+            }
+            BfOp::Right => {
+                cur_shift += 1;
+            }
+            BfOp::Inc => {
+                encounter_add(1, cur_shift);
+            }
+            BfOp::Dec => {
+                encounter_add(255, cur_shift);
+            }
+            BfOp::Move(shift) => {
+                cur_shift += *shift;
+            }
+            BfOp::Add(val) => {
+                encounter_add(*val, cur_shift);
+            }
+            _ => {
+                return None;
+            }
+        }
+    }
+    if cur_shift == 0 {
+        Some(shift_adds)
+    } else {
+        None
+    }
+}
+
+pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
+    let mut result = Vec::new();
+    struct BufferState {
+        cur_shift: i16,
+        cur_add: u8,
+    }
+    impl BufferState {
+        fn flush_shift(&mut self, result: &mut Vec<BfOp>) {
+            if self.cur_shift == 1 {
+                result.push(BfOp::Right);
+            } else if self.cur_shift == -1 {
+                result.push(BfOp::Left);
+            } else if self.cur_shift != 0 {
+                result.push(BfOp::Move(self.cur_shift));
+            }
+            self.cur_shift = 0;
+        }
+
+        fn flush_add(&mut self, result: &mut Vec<BfOp>) {
+            if self.cur_add == 1 {
+                result.push(BfOp::Inc);
+            } else if self.cur_add == 255 {
+                result.push(BfOp::Dec);
+            } else if self.cur_add != 0 {
+                result.push(BfOp::Add(self.cur_add));
+            }
+            self.cur_add = 0;
+        }
+
+        fn flush_all(&mut self, result: &mut Vec<BfOp>) {
+            assert!(!(self.cur_shift != 0 && self.cur_add != 0));
+            self.flush_shift(result);
+            self.flush_add(result);
+        }
+    }
+    let mut buffer = BufferState {
+        cur_shift: 0,
+        cur_add: 0,
+    };
+    for op in ops {
+        match op {
+            BfOp::Left => {
+                buffer.flush_add(&mut result);
+                buffer.cur_shift -= 1;
+            }
+            BfOp::Right => {
+                buffer.flush_add(&mut result);
+                buffer.cur_shift += 1;
+            }
+            BfOp::Inc => {
+                buffer.flush_shift(&mut result);
+                buffer.cur_add = buffer.cur_add.wrapping_add(1);
+            }
+            BfOp::Dec => {
+                buffer.flush_shift(&mut result);
+                buffer.cur_add = buffer.cur_add.wrapping_sub(1);
+            }
+            BfOp::Move(shift) => {
+                buffer.flush_add(&mut result);
+                buffer.cur_shift += *shift;
+            }
+            BfOp::Add(val) => {
+                buffer.flush_shift(&mut result);
+                buffer.cur_add = buffer.cur_add.wrapping_add(*val);
+            }
+            BfOp::Loop(ops) => {
+                buffer.flush_all(&mut result);
+                let mut created_output = false;
+                if let Some(shift_adds) = get_loop_as_shiftadds(ops) {
+                    if let Some(255) = shift_adds.get(&0) {
+                        if shift_adds.len() == 1 {
+                            result.push(BfOp::Clr);
+                            created_output = true;
+                        } else if shift_adds.len() == 2 {
+                            for (shift, add) in shift_adds {
+                                if shift != 0 {
+                                    if add == 1 {
+                                        assert_eq!(created_output, false);
+                                        result.push(BfOp::MoveAdd(shift));
+                                        created_output = true;
+                                    }
+                                }
+                            }
+                        } else if shift_adds.len() == 3 {
+                            let mut shift1 = None;
+                            let mut shift2 = None;
+                            for (shift, add) in shift_adds {
+                                if shift != 0 {
+                                    if add == 1 {
+                                        if shift1.is_none() {
+                                            shift1 = Some(shift);
+                                        } else {
+                                            assert!(shift2.is_none());
+                                            shift2 = Some(shift);
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(shift1) = shift1 {
+                                if let Some(shift2) = shift2 {
+                                    result.push(BfOp::MoveAdd2(shift1, shift2));
+                                    created_output = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !created_output {
+                    result.push(BfOp::Loop(get_optimized_bf_ops(ops)));
+                }
+            }
+            other => {
+                buffer.flush_all(&mut result);
+                result.push(other.clone());
+            }
+        }
+    }
+    buffer.flush_all(&mut result);
+    result
+}
+
 pub struct BfState {
     cells: Vec<u8>,
     cell_ptr: usize,
@@ -116,6 +294,19 @@ impl BfState {
         BfState {
             cells: vec![0; 1],
             cell_ptr: 0,
+        }
+    }
+
+    fn get_valid_ptr(&mut self, shift: i16) -> Result<usize, RunOpError> {
+        let new_ptr = self.cell_ptr as isize + shift as isize;
+        if new_ptr < 0 {
+            return Err(RunOpError::PtrOutOfBounds);
+        } else {
+            let result = new_ptr as usize;
+            if self.cells.len() <= result {
+                self.cells.resize(result + 1, 0);
+            }
+            Ok(result)
         }
     }
 
@@ -186,6 +377,30 @@ impl BfState {
                 while self.cells[self.cell_ptr] != 0 {
                     self.run_ops(ops, reader, writer, cpu_config)?;
                 }
+            }
+            BfOp::Clr => {
+                self.cells[self.cell_ptr] = 0;
+            }
+            BfOp::Move(shift) => {
+                self.cell_ptr = self.get_valid_ptr(*shift)?;
+            }
+            BfOp::Add(val) => {
+                self.cells[self.cell_ptr] = self.cells[self.cell_ptr].wrapping_add(*val);
+            }
+            BfOp::MoveAdd(shift) => {
+                let other_ptr = self.get_valid_ptr(*shift)?;
+                self.cells[other_ptr] =
+                    self.cells[other_ptr].wrapping_add(self.cells[self.cell_ptr]);
+                self.cells[self.cell_ptr] = 0;
+            }
+            BfOp::MoveAdd2(shift1, shift2) => {
+                let other_ptr = self.get_valid_ptr(*shift1)?;
+                self.cells[other_ptr] =
+                    self.cells[other_ptr].wrapping_add(self.cells[self.cell_ptr]);
+                let other_ptr = self.get_valid_ptr(*shift2)?;
+                self.cells[other_ptr] =
+                    self.cells[other_ptr].wrapping_add(self.cells[self.cell_ptr]);
+                self.cells[self.cell_ptr] = 0;
             }
             BfOp::DebugMessage(msg) => {
                 println!("{}", msg);
@@ -321,8 +536,20 @@ impl BfState {
     }
 }
 
-pub fn ops2str(ops: &Vec<BfOp>) -> String {
-    fn rec(ops: &Vec<BfOp>, result: &mut String) {
+pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
+    fn write_shift(result: &mut String, shift: i16) {
+        if shift < 0 {
+            for _ in 0..-shift {
+                *result += "<";
+            }
+        } else {
+            for _ in 0..shift {
+                *result += ">";
+            }
+        }
+    }
+
+    fn rec(ops: &Vec<BfOp>, result: &mut String, print_optimizations: bool) {
         for op in ops {
             match op {
                 BfOp::Left => {
@@ -345,26 +572,95 @@ pub fn ops2str(ops: &Vec<BfOp>) -> String {
                 }
                 BfOp::Loop(ops) => {
                     *result += "[";
-                    rec(ops, result);
+                    rec(ops, result, print_optimizations);
                     *result += "]";
                 }
-                BfOp::DebugMessage(_msg) => {
-                    *result += "#";
+                BfOp::Clr => {
+                    if print_optimizations {
+                        *result += "Clr";
+                    } else {
+                        *result += "[-]";
+                    }
                 }
-                BfOp::Crash(_msg) => {
-                    *result += "!";
+                BfOp::Move(shift) => {
+                    if print_optimizations {
+                        *result += &format!("Move({})", shift);
+                    } else {
+                        write_shift(result, *shift);
+                    }
+                }
+                BfOp::Add(val) => {
+                    if print_optimizations {
+                        *result += &format!("Add({})", val);
+                    } else {
+                        if *val <= 128 {
+                            for _ in 0..*val {
+                                *result += "+";
+                            }
+                        } else {
+                            for _ in *val..=255 {
+                                *result += "-";
+                            }
+                        }
+                    }
+                }
+                BfOp::MoveAdd(shift) => {
+                    if print_optimizations {
+                        *result += &format!("MoveAdd({})", shift);
+                    } else {
+                        *result += "[-";
+                        write_shift(result, *shift);
+                        *result += "+";
+                        write_shift(result, -*shift);
+                        *result += "]";
+                    }
+                }
+                BfOp::MoveAdd2(shift1, shift2) => {
+                    if print_optimizations {
+                        *result += &format!("MoveAdd2({}, {})", shift1, shift2);
+                    } else {
+                        *result += "[-";
+                        write_shift(result, *shift1);
+                        *result += "+";
+                        write_shift(result, *shift2 - *shift1);
+                        *result += "+";
+                        write_shift(result, -*shift2);
+                        *result += "]";
+                    }
+                }
+                BfOp::DebugMessage(msg) => {
+                    if print_optimizations {
+                        *result += &format!("DebugMessage({})", msg);
+                    } else {
+                        *result += "#";
+                    }
+                }
+                BfOp::Crash(msg) => {
+                    if print_optimizations {
+                        *result += &format!("Crash({})", msg);
+                    } else {
+                        *result += "!";
+                    }
                 }
                 BfOp::Breakpoint => {
-                    *result += "$";
+                    if print_optimizations {
+                        *result += "Breakpoint";
+                    } else {
+                        *result += "$";
+                    }
                 }
-                BfOp::CheckScratchIsEmptyFromHere(_msg) => {
-                    *result += "&";
+                BfOp::CheckScratchIsEmptyFromHere(msg) => {
+                    if print_optimizations {
+                        *result += &format!("CheckScratchIsEmptyFromHere({})", msg);
+                    } else {
+                        *result += "&";
+                    }
                 }
             }
         }
     }
 
     let mut result = String::new();
-    rec(ops, &mut result);
+    rec(ops, &mut result, print_optimizations);
     result
 }
