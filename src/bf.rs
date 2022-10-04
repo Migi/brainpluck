@@ -13,7 +13,7 @@ pub enum BfOp {
     Out,
     Loop(Vec<BfOp>),
     Clr,
-    Move(i16),
+    Shift(i16),
     Add(u8),
     MoveAdd(i16),
     MoveAdd2(i16, i16),
@@ -136,7 +136,7 @@ fn get_loop_as_shiftadds(ops: &Vec<BfOp>) -> Option<HashMap<i16, u8>> {
             BfOp::Dec => {
                 encounter_add(255, cur_shift);
             }
-            BfOp::Move(shift) => {
+            BfOp::Shift(shift) => {
                 cur_shift += *shift;
             }
             BfOp::Add(val) => {
@@ -167,7 +167,7 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
             } else if self.cur_shift == -1 {
                 result.push(BfOp::Left);
             } else if self.cur_shift != 0 {
-                result.push(BfOp::Move(self.cur_shift));
+                result.push(BfOp::Shift(self.cur_shift));
             }
             self.cur_shift = 0;
         }
@@ -211,7 +211,7 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
                 buffer.flush_shift(&mut result);
                 buffer.cur_add = buffer.cur_add.wrapping_sub(1);
             }
-            BfOp::Move(shift) => {
+            BfOp::Shift(shift) => {
                 buffer.flush_add(&mut result);
                 buffer.cur_shift += *shift;
             }
@@ -381,7 +381,7 @@ impl BfState {
             BfOp::Clr => {
                 self.cells[self.cell_ptr] = 0;
             }
-            BfOp::Move(shift) => {
+            BfOp::Shift(shift) => {
                 self.cell_ptr = self.get_valid_ptr(*shift)?;
             }
             BfOp::Add(val) => {
@@ -582,9 +582,9 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
                         *result += "[-]";
                     }
                 }
-                BfOp::Move(shift) => {
+                BfOp::Shift(shift) => {
                     if print_optimizations {
-                        *result += &format!("Move({})", shift);
+                        *result += &format!("Shift({})", shift);
                     } else {
                         write_shift(result, *shift);
                     }
