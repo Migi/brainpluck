@@ -40,7 +40,7 @@ fn maina() {
 }
 
 #[allow(unused)]
-fn mainb() {
+fn main() {
     let fibcode = std::fs::read_to_string("progs/fib.bfrs").expect("failed to read bfrs code");
 
     //let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = foo(); let c : u32 = 88; println(b); } fn foo() -> u32 { let a : u32 = 9; let b: u32 = 17; b }").unwrap();
@@ -147,7 +147,7 @@ fn maine() {
 }
 
 #[allow(unused)]
-fn main() {
+fn mainf() {
     let mut cfg = CpuConfig::new();
     let mut register_builder = cfg.build_register_track(TrackId::Register1);
     let a = register_builder.add_binregister(32);
