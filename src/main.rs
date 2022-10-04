@@ -151,7 +151,7 @@ fn main() {
     let mut cfg = CpuConfig::new();
     let mut register_builder = cfg.build_register_track(TrackId::Register1);
     let a = register_builder.add_binregister(32);
-    let b = register_builder.add_binregister(32);
+    let b = register_builder.add_binregister(4);
     let div = register_builder.add_binregister(32);
     let rem = register_builder.add_binregister(32);
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
@@ -160,18 +160,8 @@ fn main() {
     //cpu.add_const_to_register(register, BigUint::from(0b10101u64), scratch);
     //cpu.unpack_register_onto_zeros(register, binregister, scratch);
     cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
-    cpu.set_binregister(b, BigUint::from(156347u64), scratch);
-    cpu.div_binregisters(a, b, div, rem, scratch);
-    cpu.print_binregister_in_binary(a, scratch);
-    cpu.print_newline(scratch);
-    cpu.print_binregister_in_binary(b, scratch);
-    cpu.print_newline(scratch);
-    cpu.print_binregister_in_binary(div, scratch);
-    cpu.print_newline(scratch);
-    cpu.print_text("0b00000000000000000001100111101010\n", scratch);
-    cpu.print_binregister_in_binary(rem, scratch);
-    cpu.print_newline(scratch);
-    cpu.print_text("0b00000000000000001010110001100110\n", scratch);
+    //cpu.set_binregister(b, BigUint::from(156347u64), scratch);
+    cpu.print_binregister_in_decimal(a, scratch);
 
     let ops = lir2bf(&cpu.into_ops());
     println!("{}", ops2str(&ops));
@@ -478,6 +468,51 @@ mod test {
             &cpu.into_ops(),
             "",
             "0b00000000000000000001100111101010\n0b00000000000000001010110001100110",
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn test_div_binregisters_10() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let a = register_builder.add_binregister(32);
+        let b = register_builder.add_binregister(4);
+        let div = register_builder.add_binregister(32);
+        let rem = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
+        cpu.set_binregister(b, BigUint::from(10u64), scratch);
+        cpu.div_binregisters(a, b, div, rem, scratch);
+        cpu.print_binregister_in_binary(div, scratch);
+        cpu.print_newline(scratch);
+        cpu.print_binregister_in_binary(rem, scratch);
+
+        test_lir_prog(
+            &cpu.into_ops(),
+            "",
+            "0b00000110001011101011011111010101\n0b00000000000000000000000000000010",
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn test_print_binregister_decimal() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let a = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
+        cpu.print_binregister_in_decimal(a, scratch);
+
+        test_lir_prog(
+            &cpu.into_ops(),
+            "",
+            "1037250132",
             &cfg,
         );
     }

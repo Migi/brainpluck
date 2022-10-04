@@ -64,6 +64,10 @@ impl Register {
         assert!(frame < self.size);
         self.track.at(frame + self.offset)
     }
+
+    pub fn last_pos(&self) -> Pos {
+        self.at(self.size - 1)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -80,12 +84,12 @@ impl BinRegister {
         self.track.at(frame + self.offset)
     }
 
-    pub fn last_pos(&self) -> Pos {
-        self.at(self.size - 1)
-    }
-
     pub fn at_unchecked(&self, frame: isize) -> Pos {
         self.track.at(frame + self.offset)
+    }
+
+    pub fn last_pos(&self) -> Pos {
+        self.at(self.size - 1)
     }
 
     pub fn subview(&self, offset: isize, size: isize) -> BinRegister {
@@ -94,6 +98,14 @@ impl BinRegister {
             track: self.track,
             size,
             offset: self.offset + offset,
+        }
+    }
+
+    pub fn as_register(&self) -> Register {
+        Register {
+            track: self.track,
+            size: self.size,
+            offset: self.offset,
         }
     }
 }
@@ -1276,9 +1288,9 @@ impl<'c> Cpu<'c> {
 
     /// In callbacks, the frame will shift every time, so if you want to keep scratch data
     /// across iterations you need to shift it right at the end of every callback
-    pub fn foreach_pos_of_binregister(
+    pub fn foreach_pos_of_register(
         &mut self,
-        register: BinRegister,
+        register: Register,
         scratch_track: ScratchTrack,
         init: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
         f: impl for<'a> FnOnce(&'a mut Cpu, Pos, ScratchTrack),
@@ -1311,9 +1323,9 @@ impl<'c> Cpu<'c> {
 
     /// In callbacks, the frame will shift every time, so if you want to keep scratch data
     /// across iterations you need to shift it left at the end of every callback
-    pub fn foreach_pos_of_binregister_rev(
+    pub fn foreach_pos_of_register_rev(
         &mut self,
-        register: BinRegister,
+        register: Register,
         scratch_track: ScratchTrack,
         init: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
         f: impl for<'a> FnOnce(&'a mut Cpu, Pos, ScratchTrack),
@@ -1340,6 +1352,32 @@ impl<'c> Cpu<'c> {
             fin(self, scratch_track);
         }
         self.now_if_we_were_at_a_wed_actually_be_at_b(sentinel2, sentinel1);
+    }
+
+    /// In callbacks, the frame will shift every time, so if you want to keep scratch data
+    /// across iterations you need to shift it right at the end of every callback
+    pub fn foreach_pos_of_binregister(
+        &mut self,
+        register: BinRegister,
+        scratch_track: ScratchTrack,
+        init: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
+        f: impl for<'a> FnOnce(&'a mut Cpu, Pos, ScratchTrack),
+        fin: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
+    ) {
+        self.foreach_pos_of_register(register.as_register(), scratch_track, init, f, fin);
+    }
+
+    /// In callbacks, the frame will shift every time, so if you want to keep scratch data
+    /// across iterations you need to shift it left at the end of every callback
+    pub fn foreach_pos_of_binregister_rev(
+        &mut self,
+        register: BinRegister,
+        scratch_track: ScratchTrack,
+        init: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
+        f: impl for<'a> FnOnce(&'a mut Cpu, Pos, ScratchTrack),
+        fin: Option<impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack)>,
+    ) {
+        self.foreach_pos_of_register_rev(register.as_register(), scratch_track, init, f, fin);
     }
 
     /// In callbacks, the frame will be at the same position every time
@@ -1732,8 +1770,8 @@ impl<'c> Cpu<'c> {
         );
     }
 
-    pub fn shift_binregister_left(&mut self, register: BinRegister, scratch_track: ScratchTrack) {
-        self.foreach_pos_of_binregister_rev(
+    pub fn shift_register_left(&mut self, register: Register, scratch_track: ScratchTrack) {
+        self.foreach_pos_of_register_rev(
             register,
             scratch_track,
             None::<fn(&mut Cpu, ScratchTrack)>,
@@ -1750,8 +1788,8 @@ impl<'c> Cpu<'c> {
         );
     }
 
-    pub fn shift_binregister_right(&mut self, register: BinRegister, scratch_track: ScratchTrack) {
-        self.foreach_pos_of_binregister(
+    pub fn shift_register_right(&mut self, register: Register, scratch_track: ScratchTrack) {
+        self.foreach_pos_of_register(
             register,
             scratch_track,
             None::<fn(&mut Cpu, ScratchTrack)>,
@@ -1766,6 +1804,14 @@ impl<'c> Cpu<'c> {
                 cpu.clr_at(cpy);
             }),
         );
+    }
+
+    pub fn shift_binregister_left(&mut self, register: BinRegister, scratch_track: ScratchTrack) {
+        self.shift_register_left(register.as_register(), scratch_track);
+    }
+
+    pub fn shift_binregister_right(&mut self, register: BinRegister, scratch_track: ScratchTrack) {
+        self.shift_register_right(register.as_register(), scratch_track);
     }
 
     pub fn copy_binregister(
@@ -1830,7 +1876,7 @@ impl<'c> Cpu<'c> {
         });
     }
 
-    /// Adds a/b to out
+    /// Adds a/b to div and rem
     pub fn div_binregisters(
         &mut self,
         a: BinRegister,
@@ -1839,14 +1885,14 @@ impl<'c> Cpu<'c> {
         rem: BinRegister,
         scratch_track: ScratchTrack,
     ) {
-        assert_eq!(a.size, b.size);
-        let w = a.size;
-        let (rem2, scratch_track) = scratch_track.split_binregister(w * 2 - 1);
-        self.copy_binregister(a, rem2.subview(w-1, w), scratch_track, false);
-        let (b_shifted, scratch_track) = scratch_track.split_binregister(w * 2 - 1);
-        self.copy_binregister(b, b_shifted.subview(0, w), scratch_track, false);
+        assert_eq!(div.size, a.size);
+        assert_eq!(rem.size, a.size);
+        let (rem2, scratch_track) = scratch_track.split_binregister(a.size + b.size);
+        self.copy_binregister(a, rem2.subview(b.size, a.size), scratch_track, false);
+        let (b_shifted, scratch_track) = scratch_track.split_binregister(a.size + b.size);
+        self.copy_binregister(b, b_shifted.subview(1, b.size), scratch_track, false);
         let (counter, scratch_track) = scratch_track.split_1();
-        self.set_byte(counter, w as u8);
+        self.set_byte(counter, a.size as u8);
         self.loop_while(counter, |cpu| {
             cpu.dec();
             cpu.sub_binregister_from_binregister(b_shifted, rem2, scratch_track);
@@ -1870,7 +1916,7 @@ impl<'c> Cpu<'c> {
                 |cpu, scratch_track| {
                     let (sentinel, scratch_track) = scratch_track.split_1();
                     cpu.inc_at(sentinel);
-                    let (cur_digit, scratch_track) = scratch_track.split_binregister(w);
+                    let (cur_digit, scratch_track) = scratch_track.split_binregister(a.size);
                     cpu.copy_byte_autoscratch(counter, cur_digit.last_pos(), scratch_track);
                     cpu.loop_while(cur_digit.last_pos(), |cpu| {
                         cpu.dec();
@@ -1890,14 +1936,99 @@ impl<'c> Cpu<'c> {
                     cpu.go_clear_sentinel_right(cur_digit.last_pos());
                     cpu.go_clear_sentinel_left(sentinel);
                 },
-                |_, _| {}
+                |_, _| {},
             );
             cpu.clr_at(should_add_digit);
             cpu.shift_binregister_right(b_shifted, scratch_track);
         });
-        self.add_binregister_to_binregister(rem2.subview(w-1, w), rem, scratch_track);
+        self.add_binregister_to_binregister(rem2.subview(b.size, a.size), rem, scratch_track);
         self.clr_binregister(rem2, scratch_track);
         self.clr_binregister(b_shifted, scratch_track);
+    }
+
+    pub fn print_binregister_in_decimal(&mut self, x: BinRegister, scratch_track: ScratchTrack) {
+        let (continue_byte, scratch_track1) = scratch_track.split_1();
+        self.inc_at(continue_byte);
+        let (x_copy, scratch_track1) = scratch_track1.split_binregister(x.size);
+        self.add_binregister_to_binregister(x, x_copy, scratch_track1);
+        let out_store_size = (x.size as f64 / 3.32192809489).ceil() as isize + 1;
+        let (out_store, scratch_track1) = scratch_track1.split_register(out_store_size);
+        self.loop_while(continue_byte, |cpu| {
+            cpu.shift_register_left(out_store, scratch_track1);
+            let out = out_store.last_pos();
+            cpu.add_const_to_byte(out, '0' as u8);
+            let (rem, scratch_track2) = scratch_track1.split_binregister(x.size);
+            let (div, scratch_track3) = scratch_track2.split_binregister(x.size);
+            let (ten, scratch_track4) = scratch_track3.split_binregister(4);
+            cpu.inc_at(ten.at(ten.size - 2));
+            cpu.inc_at(ten.at(ten.size - 4));
+            cpu.div_binregisters(x_copy, ten, div, rem, scratch_track4);
+            cpu.clr_binregister(ten, scratch_track4);
+            cpu.copy_binregister(div, x_copy, scratch_track3, true);
+            cpu.clr_binregister(div, scratch_track3);
+            cpu.if_nonzero_else(
+                rem.at(x.size - 1),
+                scratch_track2,
+                |cpu, _| {
+                    cpu.clr_at(rem.at(x.size - 1));
+                    cpu.add_const_to_byte(out, 1);
+                },
+                |_, _| {},
+            );
+            cpu.if_nonzero_else(
+                rem.at(x.size - 2),
+                scratch_track2,
+                |cpu, _| {
+                    cpu.clr_at(rem.at(x.size - 2));
+                    cpu.add_const_to_byte(out, 2);
+                },
+                |_, _| {},
+            );
+            cpu.if_nonzero_else(
+                rem.at(x.size - 3),
+                scratch_track2,
+                |cpu, _| {
+                    cpu.clr_at(rem.at(x.size - 3));
+                    cpu.add_const_to_byte(out, 4);
+                },
+                |_, _| {},
+            );
+            cpu.if_nonzero_else(
+                rem.at(x.size - 4),
+                scratch_track2,
+                |cpu, _| {
+                    cpu.clr_at(rem.at(x.size - 4));
+                    cpu.add_const_to_byte(out, 8);
+                },
+                |_, _| {},
+            );
+            cpu.if_binregister_nonzero_else(
+                x_copy,
+                scratch_track1,
+                |_, _| {},
+                |cpu, _| {
+                    cpu.dec_at(continue_byte);
+                },
+            );
+        });
+        self.foreach_pos_of_register_rev(
+            out_store,
+            scratch_track1,
+            None::<fn(&mut Cpu, ScratchTrack)>,
+            |cpu, pos, scratch_track| {
+                cpu.if_nonzero_else(
+                    pos,
+                    scratch_track,
+                    |cpu, _| {
+                        cpu.goto(pos);
+                        cpu.out();
+                        cpu.clr();
+                    },
+                    |_, _| {}
+                )
+            },
+            None::<fn(&mut Cpu, ScratchTrack)>,
+        );
     }
 
     /*/// b -= a
