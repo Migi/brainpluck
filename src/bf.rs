@@ -231,7 +231,7 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
                             for (shift, add) in shift_adds {
                                 if shift != 0 {
                                     if add == 1 {
-                                        assert_eq!(created_output, false);
+                                        assert!(!created_output);
                                         result.push(BfOp::MoveAdd(shift));
                                         created_output = true;
                                     }
@@ -300,7 +300,7 @@ impl BfState {
     fn get_valid_ptr(&mut self, shift: i16) -> Result<usize, RunOpError> {
         let new_ptr = self.cell_ptr as isize + shift as isize;
         if new_ptr < 0 {
-            return Err(RunOpError::PtrOutOfBounds);
+            Err(RunOpError::PtrOutOfBounds)
         } else {
             let result = new_ptr as usize;
             if self.cells.len() <= result {
@@ -476,12 +476,7 @@ impl BfState {
                     }
                     println!();
                     if let Some(print_caret_at) = print_caret_at {
-                        println!(
-                            "{}^",
-                            std::iter::repeat(" ")
-                                .take(print_caret_at)
-                                .collect::<String>()
-                        );
+                        println!("{}^", " ".repeat(print_caret_at));
                     }
                 }
                 TrackKind::Scratch(track) => {
@@ -498,12 +493,7 @@ impl BfState {
                     }
                     println!();
                     if let Some(print_caret_at) = print_caret_at {
-                        println!(
-                            "{}^",
-                            std::iter::repeat(" ")
-                                .take(print_caret_at)
-                                .collect::<String>()
-                        );
+                        println!("{}^", " ".repeat(print_caret_at));
                     }
                 }
                 _ => {
@@ -517,20 +507,17 @@ impl BfState {
         let tracks = cpu.get_tracks();
         let num_tracks = tracks.len();
         for (id, track) in tracks {
-            match track {
-                TrackKind::Scratch(track) => {
-                    let mut i = track.track.track_num as usize;
-                    while i < self.cells.len() {
-                        if self.cells[i] != 0 {
-                            panic!(
-                                "Scratch {:?} is not zero! at position {}: value {}",
-                                id, i, self.cells[i]
-                            );
-                        }
-                        i += num_tracks;
+            if let TrackKind::Scratch(track) = track {
+                let mut i = track.track.track_num as usize;
+                while i < self.cells.len() {
+                    if self.cells[i] != 0 {
+                        panic!(
+                            "Scratch {:?} is not zero! at position {}: value {}",
+                            id, i, self.cells[i]
+                        );
                     }
+                    i += num_tracks;
                 }
-                _ => {}
             }
         }
     }

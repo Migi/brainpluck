@@ -1,3 +1,5 @@
+use crate::linker::CompiledSamProgram;
+use crate::sam::*;
 use num::BigUint;
 use num::Integer;
 use num::Zero;
@@ -614,8 +616,8 @@ impl<'c> Cpu<'c> {
 
     pub fn get_pos_on_track_between(&self, a: Pos, b: Pos, track: Track) -> Pos {
         let eval = |p: Pos| {
-            (a.index(&self.cfg) - p.index(&self.cfg)).abs()
-                + (b.index(&self.cfg) - p.index(&self.cfg)).abs()
+            (a.index(self.cfg) - p.index(self.cfg)).abs()
+                + (b.index(self.cfg) - p.index(self.cfg)).abs()
         };
         let mut best_pos = track.at(a.frame);
         let mut best_score = eval(best_pos);
@@ -1230,7 +1232,7 @@ impl<'c> Cpu<'c> {
         let zero = BigUint::zero();
         let mut div = val;
         let mut i = 0;
-        while &div != &zero {
+        while div != zero {
             if i >= register.size {
                 panic!("Value too big to fit in register");
             }
@@ -1255,7 +1257,7 @@ impl<'c> Cpu<'c> {
         let zero = BigUint::zero();
         let mut div = val;
         let mut i = 0;
-        while &div != &zero {
+        while div != zero {
             if i >= register.size {
                 panic!("Value too big to fit in register");
             }
@@ -1485,7 +1487,7 @@ impl<'c> Cpu<'c> {
         let zero = BigUint::zero();
         let mut div = val;
         let mut i = 0;
-        while &div != &zero {
+        while div != zero {
             if i >= register.size {
                 panic!("Value too big to fit in register");
             }
@@ -1610,7 +1612,7 @@ impl<'c> Cpu<'c> {
             |cpu, pos, scratch_track| {
                 let ([prnt, scratch1], _scratch_track) = scratch_track.split_2();
                 cpu.copy_byte(pos, prnt, scratch1);
-                cpu.add_const_to_byte(prnt, '0' as u8);
+                cpu.add_const_to_byte(prnt, b'0');
                 cpu.out();
                 cpu.clr();
             },
@@ -1951,12 +1953,12 @@ impl<'c> Cpu<'c> {
         self.inc_at(continue_byte);
         let (x_copy, scratch_track1) = scratch_track1.split_binregister(x.size);
         self.add_binregister_to_binregister(x, x_copy, scratch_track1);
-        let out_store_size = (x.size as f64 / 3.32192809489).ceil() as isize + 1;
+        let out_store_size = (x.size as f64 / std::f64::consts::LOG2_10).ceil() as isize + 1;
         let (out_store, scratch_track1) = scratch_track1.split_register(out_store_size);
         self.loop_while(continue_byte, |cpu| {
             cpu.shift_register_left(out_store, scratch_track1);
             let out = out_store.last_pos();
-            cpu.add_const_to_byte(out, '0' as u8);
+            cpu.add_const_to_byte(out, b'0');
             let (rem, scratch_track2) = scratch_track1.split_binregister(x.size);
             let (div, scratch_track3) = scratch_track2.split_binregister(x.size);
             let (ten, scratch_track4) = scratch_track3.split_binregister(4);
@@ -2030,6 +2032,18 @@ impl<'c> Cpu<'c> {
             None::<fn(&mut Cpu, ScratchTrack)>,
         );
     }
+
+    /*pub fn write_sam_program(&mut self, prog: CompiledSamProgram) {
+        let instr_ptr = *prog
+            .fn_start_poss
+            .get("main")
+            .expect("no main function found");
+        let mut cells = prog.bytes;
+        let hlt = cells.len() as SamVal;
+        cells.extend(&[OPCODE_HALT]);
+        let b = cells.len() as SamVal;
+        push_u32_to_vec(&mut cells, hlt);
+    }*/
 
     /*/// b -= a
     /// carry = 1 if b < a

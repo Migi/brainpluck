@@ -11,7 +11,7 @@ use std::collections::HashMap;
 // - arguments
 // - CALL instruction writes instruction ptr + 5 here (CALL is 5 bytes wide)
 
-pub fn hir2sam<'a>(program: &'a Program) -> HashMap<String, SamFn> {
+pub fn hir2sam(program: &Program) -> HashMap<String, SamFn> {
     let mut sam_fns = HashMap::new();
     for (fn_name, function) in program.fns.iter() {
         let mut sam_block_arena = SamBlockArena { blocks: Vec::new() };
@@ -19,7 +19,7 @@ pub fn hir2sam<'a>(program: &'a Program) -> HashMap<String, SamFn> {
         for stmt in &function.scope.stmts {
             cpu.exec_stmt(stmt);
         }
-        cpu.ret(function.scope.final_expr.as_ref().map(|e| &**e));
+        cpu.ret(function.scope.final_expr.as_deref());
         let prev = sam_fns.insert(
             function.name.clone(),
             SamFn {
@@ -115,7 +115,7 @@ impl<'o> SamBlockWriter<'o> {
         self.arena.blocks[self.block_index].next_block_index = next_block_index;
     }
 
-    pub fn reborrow_mut<'o2>(&'o2 mut self) -> SamBlockWriter<'o2> {
+    pub fn reborrow_mut(&mut self) -> SamBlockWriter {
         SamBlockWriter {
             arena: &mut self.arena,
             block_index: self.block_index,
@@ -130,7 +130,7 @@ impl<'a> Locals<'a> {
 
     fn create(&mut self, name: Option<&'a str>, typ: VarType) -> LocalVar<'a> {
         let result = LocalVar {
-            name: name.unwrap_or_else(|| "$temp"),
+            name: name.unwrap_or("$temp"),
             typ,
             location: self.cur_stack_size,
         };
@@ -260,7 +260,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
     pub fn get_expr_type(&self, expr: &'a Expr) -> Option<VarType> {
         match expr {
             Expr::Literal(_lit) => None,
-            Expr::VarRef(varref) => Some(self.locals.get(&varref).typ),
+            Expr::VarRef(varref) => Some(self.locals.get(varref).typ),
             Expr::BinOp(binop) => {
                 let a_type = self.get_expr_type(&binop.args.0);
                 let b_type = self.get_expr_type(&binop.args.1);
@@ -405,7 +405,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 }
             },
             Expr::VarRef(varref) => {
-                let varref_local = *self.locals.get(&varref);
+                let varref_local = *self.locals.get(varref);
                 match dest {
                     Dest::None => {}
                     Dest::X => self.read_x_at(varref_local),
@@ -585,7 +585,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
         {
             assert_eq!(fncall.args.len(), 1);
             let arg = &fncall.args[0];
-            let typ = self.get_expr_type(arg).unwrap_or_else(|| VarType::U32);
+            let typ = self.get_expr_type(arg).unwrap_or(VarType::U32);
             match typ {
                 VarType::U8 => {
                     self.eval_expr(arg, Dest::X);
@@ -674,7 +674,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 self.cur_b_offset = start_b_offset;
                 let (false_entry_index, false_exit_index) = self.block(|cpu| {
                     if let Some(if_false) = &i.if_false {
-                        cpu.eval_expr(&if_false, Dest::None);
+                        cpu.eval_expr(if_false, Dest::None);
                     }
                     cpu.goto_b_offset(end_b_offset);
                 });

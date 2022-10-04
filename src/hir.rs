@@ -125,7 +125,7 @@ pub struct Program {
     pub fns: HashMap<String, FnDecl>,
 }
 
-pub fn parse_hir<'a>(i: &'a str) -> Result<Program, nom::Err<VerboseError<&'a str>>> {
+pub fn parse_hir(i: &str) -> Result<Program, nom::Err<VerboseError<&str>>> {
     let (i, stmts) = program::<VerboseError<&str>>(i)?;
     let (i, _) = ws::<VerboseError<&str>>(i)?;
     if i.len() > 0 {

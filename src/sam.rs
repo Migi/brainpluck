@@ -164,7 +164,7 @@ impl SamOp {
     }
 }
 
-fn push_u32_to_vec(vec: &mut Vec<u8>, val: u32) {
+pub fn push_u32_to_vec(vec: &mut Vec<u8>, val: u32) {
     let [val0, val1, val2, val3] = val.to_be_bytes();
     vec.push(val0);
     vec.push(val1);
@@ -233,7 +233,6 @@ pub struct SamState {
     pub a: SamVal,
     pub b: SamVal,
     pub x: u8,
-    pub y: u8,
 }
 
 #[derive(Debug)]
@@ -261,7 +260,6 @@ impl SamState {
             a: 0,
             b,
             x: 0,
-            y: 0,
         }
     }
 

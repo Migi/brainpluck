@@ -1,4 +1,11 @@
 #![allow(dead_code, unused_imports)]
+#![allow(
+    clippy::comparison_chain,
+    clippy::len_zero,
+    clippy::redundant_closure,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if
+)]
 
 mod bf;
 mod cpu;
@@ -174,7 +181,7 @@ fn mainf() {
         &mut std::io::stdout(),
         Some(&cfg),
     );
-    println!("");
+    println!();
     match result {
         Ok(()) => {
             println!("Ran successfully");

@@ -160,7 +160,7 @@ pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
     let mut fn_start_poss = HashMap::new();
     {
         let mut cur_num_bytes = 0;
-        for (f_name, _f) in &fns {
+        for f_name in fns.keys() {
             fn_start_poss.insert(f_name.clone(), cur_num_bytes as u32);
             for op in &fn_ops[f_name] {
                 cur_num_bytes += op.len();
@@ -169,7 +169,7 @@ pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
     }
 
     let mut bytes = Vec::with_capacity(1000);
-    for (f_name, _f) in &fns {
+    for f_name in fns.keys() {
         for op in &fn_ops[f_name] {
             let sam_op = match op {
                 SamFnOp::Simple(op) => SamOp::Simple(*op),
