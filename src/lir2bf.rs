@@ -35,6 +35,9 @@ pub fn lir2bf(ops: &Vec<Lir>) -> Vec<BfOp> {
             Lir::Breakpoint => {
                 result.push(BfOp::Breakpoint);
             }
+            Lir::PrintRegisters => {
+                result.push(BfOp::PrintRegisters);
+            }
             Lir::CheckScratchIsEmptyFromHere(msg) => {
                 result.push(BfOp::CheckScratchIsEmptyFromHere(msg.clone()));
             }

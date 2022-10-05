@@ -1,4 +1,5 @@
 use crate::{CpuConfig, TrackKind};
+use std::cell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -20,6 +21,7 @@ pub enum BfOp {
     DebugMessage(String),
     Crash(String),
     Breakpoint,
+    PrintRegisters,
     CheckScratchIsEmptyFromHere(String),
 }
 
@@ -414,6 +416,11 @@ impl BfState {
                     self.print_state(cfg);
                 }
             }
+            BfOp::PrintRegisters => {
+                if let Some(cfg) = cpu_config {
+                    self.print_registers(cfg);
+                }
+            }
             BfOp::CheckScratchIsEmptyFromHere(msg) => {
                 if let Some(cfg) = cpu_config {
                     let num_tracks = cfg.get_tracks().len();
@@ -496,9 +503,68 @@ impl BfState {
                         println!("{}^", " ".repeat(print_caret_at));
                     }
                 }
+                TrackKind::MultipleRegisters(track_num, _, _) => {
+                    let mut i = *track_num as usize;
+                    let mut caret_i = 0;
+                    let mut print_caret_at = None;
+                    while i < self.cells.len() {
+                        if i == self.cell_ptr {
+                            print_caret_at = Some(caret_i);
+                        }
+                        caret_i += num_digits(self.cells[i]) + 2;
+                        print!("{}, ", self.cells[i]);
+                        i += num_tracks;
+                    }
+                    println!();
+                    if let Some(print_caret_at) = print_caret_at {
+                        println!("{}^", " ".repeat(print_caret_at));
+                    }
+                }
                 _ => {
                     println!("Unknown type!");
                 }
+            }
+        }
+    }
+
+    pub fn print_registers(&self, cpu: &CpuConfig) {
+        let tracks = cpu.get_tracks();
+        let num_tracks = tracks.len();
+        let cur_track_num = self.cell_ptr % num_tracks;
+        let offset = self.cell_ptr / num_tracks;
+        for (id, track) in tracks {
+            println!("Track {:?}:", id);
+            match track {
+                TrackKind::MultipleRegisters(track_num, register_map, binregister_map) => {
+                    if cur_track_num as isize != *track_num {
+                        continue;
+                    }
+                    for (name, register) in register_map {
+                        let mut val_str = String::new();
+                        let mut val = 0u32;
+                        for i in 0..register.size {
+                            let cell_val = self.cells[cur_track_num
+                                + (offset + i as usize + register.offset as usize) * num_tracks];
+                            val *= 256;
+                            val += cell_val as u32;
+                            val_str += &format!("{}, ", cell_val);
+                        }
+                        println!("{}: {} ({})", name, val_str, val);
+                    }
+                    for (name, register) in binregister_map {
+                        let mut val_str = String::new();
+                        let mut val = 0u32;
+                        for i in 0..register.size {
+                            let cell_val = self.cells[cur_track_num
+                                + (offset + i as usize + register.offset as usize) * num_tracks];
+                            val *= 2;
+                            val += cell_val as u32;
+                            val_str += &format!("{}, ", cell_val);
+                        }
+                        println!("{}: {} ({})", name, val_str, val);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -634,6 +700,13 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
                         *result += "Breakpoint";
                     } else {
                         *result += "$";
+                    }
+                }
+                BfOp::PrintRegisters => {
+                    if print_optimizations {
+                        *result += "PrintRegisters";
+                    } else {
+                        *result += "";
                     }
                 }
                 BfOp::CheckScratchIsEmptyFromHere(msg) => {

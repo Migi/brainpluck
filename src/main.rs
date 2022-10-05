@@ -14,11 +14,11 @@ mod hir2sam;
 mod linker;
 mod lir2bf;
 mod sam;
+mod sam2lir;
 
 extern crate nom;
 extern crate num;
 
-use num::BigUint;
 use std::fmt::Debug;
 
 use crate::bf::*;
@@ -28,6 +28,7 @@ use crate::hir2sam::*;
 use crate::linker::*;
 use crate::lir2bf::*;
 use crate::sam::*;
+use crate::sam2lir::*;
 
 fn print_err<T>(e: impl Debug) -> T {
     panic!("Error: {:?}", e)
@@ -47,7 +48,7 @@ fn maina() {
 }
 
 #[allow(unused)]
-fn main() {
+fn mainb() {
     let fibcode = std::fs::read_to_string("progs/fib.bfrs").expect("failed to read bfrs code");
 
     //let hir = parse_hir("fn main() { let a : u32 = 7; let b : u32 = foo(); let c : u32 = 88; println(b); } fn foo() -> u32 { let a : u32 = 9; let b: u32 = 17; b }").unwrap();
@@ -104,8 +105,8 @@ fn maind() {
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
-    cpu.add_const_to_register(register, BigUint::from(103050u64), scratch);
-    cpu.add_const_to_register(register, BigUint::from(20406u64), scratch);
+    cpu.add_const_to_register(register, 103050u64, scratch);
+    cpu.add_const_to_register(register, 20406u64, scratch);
 
     cpu.moveprint_byte(register.at(0), scratch);
     cpu.print_text(", ", scratch);
@@ -135,7 +136,7 @@ fn maine() {
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
-    cpu.set_register(register, BigUint::from(123456u64));
+    cpu.set_register(register, 123456u64);
     cpu.moveprint_register_hex(register, scratch);
 
     let ops = lir2bf(&cpu.into_ops());
@@ -158,25 +159,62 @@ fn mainf() {
     let mut cfg = CpuConfig::new();
     let mut register_builder = cfg.build_register_track(TrackId::Register1);
     let a = register_builder.add_binregister(32);
-    let b = register_builder.add_binregister(4);
-    let div = register_builder.add_binregister(32);
-    let rem = register_builder.add_binregister(32);
+    let b = register_builder.add_binregister(32);
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
-    //cpu.add_const_to_register(register, BigUint::from(0b10101u64), scratch);
-    //cpu.unpack_register_onto_zeros(register, binregister, scratch);
-    cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
-    //cpu.set_binregister(b, BigUint::from(156347u64), scratch);
-    cpu.print_binregister_in_decimal(a, scratch);
+    cpu.set_binregister(a, 18u64, scratch);
+    cpu.set_binregister(b, 18u64, scratch);
+    let (cmp_result, scratch) = scratch.split_1();
+    cpu.cmp_2_uint_binregisters(a, b, cmp_result, scratch);
+    cpu.add_const_to_byte(cmp_result, b'5');
+    cpu.goto(cmp_result);
+    cpu.out();
+    cpu.clr();
 
     let ops = lir2bf(&cpu.into_ops());
-    let ops = get_optimized_bf_ops(&ops);
-    println!("{}", ops2str(&ops, true));
+    let opt_ops = get_optimized_bf_ops(&ops);
+    println!("{}", ops2str(&opt_ops, true));
     println!("Num instrs: {}", ops2str(&ops, false).chars().count());
     let mut state = BfState::new();
     let result = state.run_ops(
-        &ops,
+        &opt_ops,
+        &mut std::io::stdin(),
+        &mut std::io::stdout(),
+        Some(&cfg),
+    );
+    println!();
+    match result {
+        Ok(()) => {
+            println!("Ran successfully");
+        }
+        Err(e) => {
+            println!("Error: {:?}", e);
+        }
+    }
+    state.print_state(&cfg);
+}
+
+#[allow(unused)]
+fn main() {
+    let hir =
+        parse_hir("fn main() { let a : u32 = 7; let b : u32 = if 9 { a } else { 9 }; print(b); }")
+            .unwrap();
+
+    let sam = hir2sam(&hir);
+    println!("{:?}", sam);
+
+    let linked = link_sam_fns(sam);
+    println!("{:?}", linked);
+
+    let (ops, cfg) = sam2lir(linked);
+    let ops = lir2bf(&ops);
+    let opt_ops = get_optimized_bf_ops(&ops);
+    println!("{}", ops2str(&opt_ops, true));
+    println!("Num instrs: {}", ops2str(&ops, false).chars().count());
+    let mut state = BfState::new();
+    let result = state.run_ops(
+        &opt_ops,
         &mut std::io::stdin(),
         &mut std::io::stdout(),
         Some(&cfg),
@@ -249,8 +287,8 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.add_const_to_register(register, BigUint::from(103050u64), scratch);
-        cpu.add_const_to_register(register, BigUint::from(20406u64), scratch);
+        cpu.add_const_to_register(register, 103050u64, scratch);
+        cpu.add_const_to_register(register, 20406u64, scratch);
 
         cpu.moveprint_byte(register.at(0), scratch);
         cpu.print_text(", ", scratch);
@@ -270,7 +308,7 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_register(register, BigUint::from(123456u64));
+        cpu.set_register(register, 123456u64);
         cpu.moveprint_register_hex(register, scratch);
 
         test_lir_prog(&cpu.into_ops(), "", "0x0001E240", &cfg);
@@ -285,12 +323,8 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.add_const_to_register(
-            register,
-            BigUint::from(0b111111111101010101010101u64),
-            scratch,
-        );
-        cpu.unpack_register_onto_zeros(register, binregister, scratch);
+        cpu.add_const_to_register(register, 0b111111111101010101010101u64, scratch);
+        cpu.unpack_register(register, binregister, scratch, false);
         cpu.print_binregister_in_binary(binregister, scratch);
 
         test_lir_prog(
@@ -309,11 +343,7 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(
-            binregister,
-            BigUint::from(0b1000000000000000000000u64),
-            scratch,
-        );
+        cpu.set_binregister(binregister, 0b1000000000000000000000u64, scratch);
         cpu.if_binregister_nonzero_else(
             binregister,
             scratch,
@@ -349,8 +379,8 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(reg1, BigUint::from(789742058u64), scratch);
-        cpu.set_binregister(reg2, BigUint::from(391490498u64), scratch);
+        cpu.set_binregister(reg1, 789742058u64, scratch);
+        cpu.set_binregister(reg2, 391490498u64, scratch);
         cpu.add_binregister_to_binregister(reg1, reg2, scratch);
         cpu.print_binregister_in_binary(reg2, scratch);
 
@@ -371,8 +401,8 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(reg1, BigUint::from(289742058u64), scratch);
-        cpu.set_binregister(reg2, BigUint::from(791490498u64), scratch);
+        cpu.set_binregister(reg1, 289742058u64, scratch);
+        cpu.set_binregister(reg2, 791490498u64, scratch);
         cpu.sub_binregister_from_binregister(reg1, reg2, scratch);
         cpu.print_binregister_in_binary(reg2, scratch);
 
@@ -392,11 +422,7 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(
-            reg1,
-            BigUint::from(0b01000110011010000010110110101100u64),
-            scratch,
-        );
+        cpu.set_binregister(reg1, 0b01000110011010000010110110101100u64, scratch);
         cpu.shift_binregister_left(reg1, scratch);
         cpu.print_binregister_in_binary(reg1, scratch);
 
@@ -416,11 +442,7 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(
-            reg1,
-            BigUint::from(0b01000110011010000010110110101101u64),
-            scratch,
-        );
+        cpu.set_binregister(reg1, 0b01000110011010000010110110101101u64, scratch);
         cpu.shift_binregister_right(reg1, scratch);
         cpu.print_binregister_in_binary(reg1, scratch);
 
@@ -442,8 +464,8 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(reg1, BigUint::from(103050u64), scratch);
-        cpu.set_binregister(reg2, BigUint::from(1561594u64), scratch);
+        cpu.set_binregister(reg1, 103050u64, scratch);
+        cpu.set_binregister(reg2, 1561594u64, scratch);
         cpu.mul_binregisters(reg1, reg2, reg3, scratch);
         cpu.print_binregister_in_binary(reg3, scratch);
 
@@ -466,8 +488,8 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
-        cpu.set_binregister(b, BigUint::from(156347u64), scratch);
+        cpu.set_binregister(a, 1037250132u64, scratch);
+        cpu.set_binregister(b, 156347u64, scratch);
         cpu.div_binregisters(a, b, div, rem, scratch);
         cpu.print_binregister_in_binary(div, scratch);
         cpu.print_newline(scratch);
@@ -492,8 +514,8 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
-        cpu.set_binregister(b, BigUint::from(10u64), scratch);
+        cpu.set_binregister(a, 1037250132u64, scratch);
+        cpu.set_binregister(b, 10u64, scratch);
         cpu.div_binregisters(a, b, div, rem, scratch);
         cpu.print_binregister_in_binary(div, scratch);
         cpu.print_newline(scratch);
@@ -515,9 +537,46 @@ mod test {
         let scratch = cfg.add_scratch_track(TrackId::Scratch1);
         let mut cpu = Cpu::new(&cfg);
 
-        cpu.set_binregister(a, BigUint::from(1037250132u64), scratch);
+        cpu.set_binregister(a, 1037250132u64, scratch);
         cpu.print_binregister_in_decimal(a, scratch);
 
         test_lir_prog(&cpu.into_ops(), "", "1037250132", &cfg);
+    }
+
+    #[test]
+    fn test_cmp_2_binregisters() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let a = register_builder.add_binregister(32);
+        let b = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+        let (cmp_result, scratch) = scratch.split_1();
+        cpu.add_const_to_byte(cmp_result, b'5');
+
+        cpu.set_binregister(a, 136u64, scratch);
+        cpu.set_binregister(b, 138u64, scratch);
+        cpu.cmp_2_uint_binregisters(a, b, cmp_result, scratch);
+        cpu.goto(cmp_result);
+        cpu.out();
+        cpu.inc_binregister(a, scratch);
+        cpu.cmp_2_uint_binregisters(a, b, cmp_result, scratch);
+        cpu.goto(cmp_result);
+        cpu.out();
+        cpu.inc_binregister(a, scratch);
+        cpu.cmp_2_uint_binregisters(a, b, cmp_result, scratch);
+        cpu.goto(cmp_result);
+        cpu.out();
+        cpu.inc_binregister(a, scratch);
+        cpu.cmp_2_uint_binregisters(a, b, cmp_result, scratch);
+        cpu.goto(cmp_result);
+        cpu.out();
+        cpu.inc_binregister(a, scratch);
+        cpu.cmp_2_uint_binregisters(a, b, cmp_result, scratch);
+        cpu.goto(cmp_result);
+        cpu.out();
+        cpu.clr();
+
+        test_lir_prog(&cpu.into_ops(), "", "43345", &cfg);
     }
 }
