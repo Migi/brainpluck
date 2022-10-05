@@ -1,6 +1,6 @@
 use crate::hir2sam::SamBlock;
 use crate::sam::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Debug)]
 pub enum SamLOp {
@@ -40,10 +40,10 @@ impl SamFn {
 #[derive(Debug)]
 pub struct CompiledSamProgram {
     pub bytes: Vec<u8>,
-    pub fn_start_poss: HashMap<String, u32>,
+    pub fn_start_poss: BTreeMap<String, u32>,
 }
 
-pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
+pub fn link_sam_fns(fns: BTreeMap<String, SamFn>) -> CompiledSamProgram {
     #[derive(Debug)]
     enum SamFnOp {
         Simple(SamSOp),
@@ -63,7 +63,7 @@ pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
         }
     }
 
-    let mut fn_ops = HashMap::new();
+    let mut fn_ops = BTreeMap::new();
     {
         for (f_name, f) in &fns {
             // greedily find a good order for the blocks (with few unnecessary jumps)
@@ -157,7 +157,7 @@ pub fn link_sam_fns(fns: HashMap<String, SamFn>) -> CompiledSamProgram {
     }
 
     // calculate all functions' first byte positions
-    let mut fn_start_poss = HashMap::new();
+    let mut fn_start_poss = BTreeMap::new();
     {
         let mut cur_num_bytes = 0;
         for f_name in fns.keys() {

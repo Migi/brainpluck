@@ -4,15 +4,15 @@ use crate::sam::*;
 use num::BigUint;
 use num::Num;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 // calling convention (stack):
 // - return value value
 // - arguments
 // - CALL instruction writes instruction ptr + 5 here (CALL is 5 bytes wide)
 
-pub fn hir2sam(program: &Program) -> HashMap<String, SamFn> {
-    let mut sam_fns = HashMap::new();
+pub fn hir2sam(program: &Program) -> BTreeMap<String, SamFn> {
+    let mut sam_fns = BTreeMap::new();
     for (fn_name, function) in program.fns.iter() {
         let mut sam_block_arena = SamBlockArena { blocks: Vec::new() };
         let mut cpu = SamCpu::new(&program.fns, fn_name, &mut sam_block_arena);
@@ -63,7 +63,7 @@ struct LocalVar<'a> {
 
 #[derive(Clone, Debug)]
 struct Locals<'a> {
-    locals: HashMap<&'a str, LocalVar<'a>>,
+    locals: BTreeMap<&'a str, LocalVar<'a>>,
     cur_stack_size: u32,
 }
 
@@ -169,20 +169,20 @@ struct SamCpu<'a, 'o> {
     locals: Locals<'a>,
     out: SamBlockWriter<'o>,
     cur_b_offset: u32,
-    fn_decls: &'a HashMap<String, FnDecl>,
+    fn_decls: &'a BTreeMap<String, FnDecl>,
     valret_local: LocalVar<'a>,
     iret_local: LocalVar<'a>,
 }
 
 impl<'a, 'o> SamCpu<'a, 'o> {
     pub fn new(
-        fn_decls: &'a HashMap<String, FnDecl>,
+        fn_decls: &'a BTreeMap<String, FnDecl>,
         fn_name: &'a str,
         arena: &'o mut SamBlockArena,
     ) -> SamCpu<'a, 'o> {
         let decl = fn_decls.get(fn_name).expect("Compiling unknown function");
         let mut locals = Locals {
-            locals: HashMap::new(),
+            locals: BTreeMap::new(),
             cur_stack_size: 0,
         };
         let valret_local = locals.new_temp(decl.ret);

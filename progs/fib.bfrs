@@ -1,5 +1,5 @@
 fn main() {
-    let y : u8 = 10;
+    let y : u8 = 5;
     while y {
         println(fib(y));
         y = y - 1;

@@ -13,6 +13,7 @@ pub enum Lir {
     In,
     Out,
     Loop(Vec<Lir>),
+    Comment(String),
     DebugMessage(String),
     Crash(String),
     Breakpoint,
@@ -27,11 +28,11 @@ pub struct Pos {
 }
 
 impl Pos {
-    fn index(&self, cfg: &CpuConfig) -> isize {
+    pub fn index(&self, cfg: &CpuConfig) -> isize {
         self.frame * cfg.frame_size() + self.track
     }
 
-    fn get_shifted(&self, frame_shift: isize) -> Pos {
+    pub fn get_shifted(&self, frame_shift: isize) -> Pos {
         Pos {
             track: self.track,
             frame: self.frame + frame_shift,
@@ -92,6 +93,10 @@ impl Register {
         assert!(offset + size <= self.size);
         self.subview_unchecked(offset, size)
     }
+
+    pub fn subview_tail(&self, size: isize) -> Register {
+        self.subview(self.size - size, size)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -124,6 +129,10 @@ impl BinRegister {
             size,
             offset: self.offset + offset,
         }
+    }
+
+    pub fn subview_tail(&self, size: isize) -> BinRegister {
+        self.subview(self.size - size, size)
     }
 
     pub fn as_register(&self) -> Register {
@@ -449,6 +458,10 @@ impl<'c> Cpu<'c> {
 
     pub fn read_stdin(&mut self) {
         self.lir.push(Lir::In);
+    }
+
+    pub fn comment(&mut self, msg: impl Into<String>) {
+        self.lir.push(Lir::Comment(msg.into()));
     }
 
     pub fn debug_message(&mut self, msg: impl Into<String>) {
@@ -1911,6 +1924,44 @@ impl<'c> Cpu<'c> {
         );
     }
 
+    /// shift the register, going out of bounds of the register
+    pub fn shift_register_left_oob_by(
+        &mut self,
+        register: Register,
+        scratch_track: ScratchTrack,
+        by: isize,
+    ) {
+        assert!(by > 0);
+        self.foreach_pos_of_register(
+            register,
+            scratch_track,
+            None::<fn(&mut Cpu, ScratchTrack)>,
+            |cpu, pos, _| {
+                cpu.moveadd_byte(pos, pos.get_shifted(-by));
+            },
+            None::<fn(&mut Cpu, ScratchTrack)>,
+        );
+    }
+
+    /// shift the register, going out of bounds of the register
+    pub fn shift_register_right_oob_by(
+        &mut self,
+        register: Register,
+        scratch_track: ScratchTrack,
+        by: isize,
+    ) {
+        assert!(by > 0);
+        self.foreach_pos_of_register_rev(
+            register,
+            scratch_track,
+            None::<fn(&mut Cpu, ScratchTrack)>,
+            |cpu, pos, _| {
+                cpu.moveadd_byte(pos, pos.get_shifted(by));
+            },
+            None::<fn(&mut Cpu, ScratchTrack)>,
+        );
+    }
+
     pub fn shift_register_left(&mut self, register: Register, scratch_track: ScratchTrack) {
         self.clr_at(register.at(0));
         self.foreach_pos_of_register(
@@ -1993,6 +2044,23 @@ impl<'c> Cpu<'c> {
             },
             if_eq,
         );
+    }
+
+    /// Version of match_cmp_result that minimizes scratch space usage for callbacks
+    pub fn match_cmp_result_lowscratch(
+        &mut self,
+        cmp_result: Pos,
+        scratch_track: ScratchTrack,
+        if_a_lt_b: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+        if_eq: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+        if_a_gt_b: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+    ) {
+        self.if_zero(cmp_result, scratch_track, if_eq);
+        self.inc_at(cmp_result);
+        self.if_zero(cmp_result, scratch_track, if_a_lt_b);
+        self.sub_const_from_byte(cmp_result, 2);
+        self.if_zero(cmp_result, scratch_track, if_a_gt_b);
+        self.clr_at(cmp_result);
     }
 
     pub fn cmp_binregister(
@@ -2085,51 +2153,54 @@ impl<'c> Cpu<'c> {
         cmp_result: Pos,
         scratch_track: ScratchTrack,
     ) {
-        self.foreach_pos_of_binregister(
-            a,
-            scratch_track,
-            None::<fn(&mut Cpu, ScratchTrack)>,
-            |cpu, pos, scratch_track| {
-                let (sliding_result, scratch_track) = scratch_track.split_1();
-                cpu.if_nonzero_else(
-                    sliding_result,
-                    scratch_track,
-                    |_, _| {},
-                    |cpu, scratch_track| {
-                        cpu.if_nonzero_else(
-                            pos,
-                            scratch_track,
-                            |cpu, scratch_track| {
-                                cpu.if_nonzero_else(
-                                    b.at(0),
-                                    scratch_track,
-                                    |_, _| {},
-                                    |cpu, _| {
-                                        cpu.inc_at(sliding_result);
-                                    },
-                                );
-                            },
-                            |cpu, scratch_track| {
-                                cpu.if_nonzero_else(
-                                    b.at(0),
-                                    scratch_track,
-                                    |cpu, _| {
-                                        cpu.dec_at(sliding_result);
-                                    },
-                                    |_, _| {},
-                                );
-                            },
-                        );
-                    },
-                );
-                cpu.moveadd_byte(sliding_result, sliding_result.get_shifted(1));
-            },
-            Some(|cpu: &mut Cpu, scratch_track: ScratchTrack| {
-                let (sliding_result, _) = scratch_track.split_1();
-                cpu.moveadd_byte(sliding_result, cmp_result);
-            }),
-        );
         assert_eq!(a.size, b.size);
+        assert!(a.size > 0);
+        if a.size == 1 {
+            let (a_cpy, scratch_track) = scratch_track.split_1();
+            self.copy_byte_autoscratch(a.at(0), a_cpy, scratch_track);
+            let (b_cpy, scratch_track) = scratch_track.split_1();
+            self.copy_byte_autoscratch(b.at(0), b_cpy, scratch_track);
+            self.loop_while(b_cpy, |cpu| {
+                cpu.dec();
+                cpu.dec_at(a_cpy);
+            });
+            self.moveadd_byte(a_cpy, cmp_result);
+        } else {
+            self.foreach_pos_of_binregister(
+                a,
+                scratch_track,
+                None::<fn(&mut Cpu, ScratchTrack)>,
+                |cpu, pos, scratch_track| {
+                    let (sliding_result, scratch_track) = scratch_track.split_1();
+                    cpu.if_nonzero_else(
+                        sliding_result,
+                        scratch_track,
+                        |_, _| {},
+                        |cpu, scratch_track| {
+                            cpu.if_nonzero_else(
+                                pos,
+                                scratch_track,
+                                |cpu, scratch_track| {
+                                    cpu.if_zero(b.at(0), scratch_track, |cpu, _| {
+                                        cpu.inc_at(sliding_result);
+                                    });
+                                },
+                                |cpu, scratch_track| {
+                                    cpu.if_nonzero(b.at(0), scratch_track, |cpu, _| {
+                                        cpu.dec_at(sliding_result);
+                                    });
+                                },
+                            );
+                        },
+                    );
+                    cpu.moveadd_byte(sliding_result, sliding_result.get_shifted(1));
+                },
+                Some(|cpu: &mut Cpu, scratch_track: ScratchTrack| {
+                    let (sliding_result, _) = scratch_track.split_1();
+                    cpu.moveadd_byte(sliding_result, cmp_result);
+                }),
+            );
+        }
     }
 
     /// Adds a*b to out

@@ -159,18 +159,11 @@ fn mainf() {
     let mut cfg = CpuConfig::new();
     let mut register_builder = cfg.build_register_track(TrackId::Register1);
     let a = register_builder.add_binregister(32);
-    let b = register_builder.add_binregister(32);
     let scratch = cfg.add_scratch_track(TrackId::Scratch1);
     let mut cpu = Cpu::new(&cfg);
 
-    cpu.set_binregister(a, 18u64, scratch);
-    cpu.set_binregister(b, 18u64, scratch);
-    let (cmp_result, scratch) = scratch.split_1();
-    cpu.cmp_2_uint_binregisters(a, b, cmp_result, scratch);
-    cpu.add_const_to_byte(cmp_result, b'5');
-    cpu.goto(cmp_result);
-    cpu.out();
-    cpu.clr();
+    cpu.set_binregister(a, 1234567u64, scratch);
+    cpu.print_binregister_in_decimal(a, scratch);
 
     let ops = lir2bf(&cpu.into_ops());
     let opt_ops = get_optimized_bf_ops(&ops);
@@ -193,13 +186,36 @@ fn mainf() {
         }
     }
     state.print_state(&cfg);
+    println!("Instrs executed: {}", state.get_instrs_executed());
 }
 
 #[allow(unused)]
 fn main() {
-    let hir =
-        parse_hir("fn main() { let a : u32 = 7; let b : u32 = if 9 { a } else { 9 }; print(b); }")
-            .unwrap();
+    let hir = parse_hir(
+        "fn main() {
+            println(fib(3));
+        }
+        
+        fn fib(x: u8) -> u8 {
+            if x {
+                let x_minus_1 : u8 = x - 1;
+                if x_minus_1 {
+                    let x_minus_2 : u8 = x_minus_1 - 1;
+                    let f1 : u8 = fib(x_minus_1);
+                    let f2 : u8 = fib(x_minus_2);
+                    f1 + f2
+                } else {
+                    1
+                }
+            } else {
+                1
+            }
+        }",
+    )
+    .unwrap();
+
+    /*let fibcode = std::fs::read_to_string("progs/fib.bfrs").expect("failed to read bfrs code");
+    let hir = parse_hir(&fibcode).unwrap();*/
 
     let sam = hir2sam(&hir);
     println!("{:?}", sam);
@@ -212,6 +228,7 @@ fn main() {
     let opt_ops = get_optimized_bf_ops(&ops);
     println!("{}", ops2str(&opt_ops, true));
     println!("Num instrs: {}", ops2str(&ops, false).chars().count());
+    
     let mut state = BfState::new();
     let result = state.run_ops(
         &opt_ops,
@@ -229,6 +246,8 @@ fn main() {
         }
     }
     state.print_state(&cfg);
+    println!("Num instrs: {}", ops2str(&ops, false).chars().count());
+    println!("Instrs executed: {}", state.get_instrs_executed());
 }
 
 #[cfg(test)]
@@ -241,7 +260,7 @@ mod test {
         let mut r = i.as_bytes();
         let mut w = Vec::new();
         state
-            .run_ops(&prog, &mut r, &mut w, None)
+            .run_ops(&prog, &mut r, &mut w, cfg)
             .unwrap_or_else(print_err);
         assert_eq!(w, o.as_bytes());
         if let Some(cfg) = cfg {
@@ -578,5 +597,39 @@ mod test {
         cpu.clr();
 
         test_lir_prog(&cpu.into_ops(), "", "43345", &cfg);
+    }
+
+    #[test]
+    fn test_full_fib() {
+        let hir = parse_hir(
+            "fn main() {
+                println(fib(2));
+            }
+            
+            fn fib(x: u8) -> u8 {
+                if x {
+                    let x_minus_1 : u8 = x - 1;
+                    if x_minus_1 {
+                        let x_minus_2 : u8 = x_minus_1 - 1;
+                        let f1 : u8 = fib(x_minus_1);
+                        let f2 : u8 = fib(x_minus_2);
+                        f1 + f2
+                    } else {
+                        1
+                    }
+                } else {
+                    1
+                }
+            }",
+        )
+        .unwrap();
+
+        let sam = hir2sam(&hir);
+
+        let linked = link_sam_fns(sam);
+
+        let (ops, cfg) = sam2lir(linked);
+
+        test_lir_prog(&ops, "", "2\n", &cfg);
     }
 }

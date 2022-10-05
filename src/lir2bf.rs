@@ -26,6 +26,9 @@ pub fn lir2bf(ops: &Vec<Lir>) -> Vec<BfOp> {
             Lir::Loop(ops) => {
                 result.push(BfOp::Loop(lir2bf(ops)));
             }
+            Lir::Comment(str) => {
+                result.push(BfOp::Comment(str.clone()));
+            }
             Lir::DebugMessage(str) => {
                 result.push(BfOp::DebugMessage(str.clone()));
             }

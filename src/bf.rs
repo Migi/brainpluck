@@ -18,6 +18,7 @@ pub enum BfOp {
     Add(u8),
     MoveAdd(i16),
     MoveAdd2(i16, i16),
+    Comment(String),
     DebugMessage(String),
     Crash(String),
     Breakpoint,
@@ -280,6 +281,7 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
 pub struct BfState {
     cells: Vec<u8>,
     cell_ptr: usize,
+    instrs_executed: u64,
 }
 
 #[derive(Debug)]
@@ -296,7 +298,12 @@ impl BfState {
         BfState {
             cells: vec![0; 1],
             cell_ptr: 0,
+            instrs_executed: 0,
         }
+    }
+
+    pub fn get_instrs_executed(&self) -> u64 {
+        self.instrs_executed
     }
 
     fn get_valid_ptr(&mut self, shift: i16) -> Result<usize, RunOpError> {
@@ -319,6 +326,7 @@ impl BfState {
         writer: &mut impl Write,
         cpu_config: Option<&CpuConfig>,
     ) -> Result<(), RunOpError> {
+        self.instrs_executed += 1;
         match op {
             BfOp::Left => {
                 if self.cell_ptr == 0 {
@@ -404,6 +412,7 @@ impl BfState {
                     self.cells[other_ptr].wrapping_add(self.cells[self.cell_ptr]);
                 self.cells[self.cell_ptr] = 0;
             }
+            BfOp::Comment(_) => {}
             BfOp::DebugMessage(msg) => {
                 println!("{}", msg);
             }
@@ -532,8 +541,7 @@ impl BfState {
         let num_tracks = tracks.len();
         let cur_track_num = self.cell_ptr % num_tracks;
         let offset = self.cell_ptr / num_tracks;
-        for (id, track) in tracks {
-            println!("Track {:?}:", id);
+        for (_id, track) in tracks {
             match track {
                 TrackKind::MultipleRegisters(track_num, register_map, binregister_map) => {
                     if cur_track_num as isize != *track_num {
@@ -549,7 +557,7 @@ impl BfState {
                             val += cell_val as u32;
                             val_str += &format!("{}, ", cell_val);
                         }
-                        println!("{}: {} ({})", name, val_str, val);
+                        println!("{}: {}", name, val);
                     }
                     for (name, register) in binregister_map {
                         let mut val_str = String::new();
@@ -561,7 +569,7 @@ impl BfState {
                             val += cell_val as u32;
                             val_str += &format!("{}, ", cell_val);
                         }
-                        println!("{}: {} ({})", name, val_str, val);
+                        println!("{}: {}", name, val);
                     }
                 }
                 _ => {}
@@ -679,6 +687,13 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
                         *result += "+";
                         write_shift(result, -*shift2);
                         *result += "]";
+                    }
+                }
+                BfOp::Comment(msg) => {
+                    if print_optimizations {
+                        *result += &format!("Comment({})", msg);
+                    } else {
+                        *result += msg;
                     }
                 }
                 BfOp::DebugMessage(msg) => {

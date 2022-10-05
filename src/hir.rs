@@ -13,7 +13,7 @@ use nom::{
 };
 use num::BigUint;
 use num::Num;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BinOpKind {
@@ -122,7 +122,7 @@ pub struct FnDecl {
 
 #[derive(Debug)]
 pub struct Program {
-    pub fns: HashMap<String, FnDecl>,
+    pub fns: BTreeMap<String, FnDecl>,
 }
 
 pub fn parse_hir(i: &str) -> Result<Program, nom::Err<VerboseError<&str>>> {
@@ -412,7 +412,7 @@ fn fn_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnDecl, E
 }
 
 fn program<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Program, E> {
-    let (i, fns) = fold_many1(fn_decl, HashMap::new(), |mut fns, new_fn| {
+    let (i, fns) = fold_many1(fn_decl, BTreeMap::new(), |mut fns, new_fn| {
         if fns.contains_key(&new_fn.name) {
             panic!("Double definition for function");
         }
