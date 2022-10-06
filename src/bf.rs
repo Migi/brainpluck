@@ -597,7 +597,7 @@ impl BfState {
     }
 }
 
-pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
+pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool, clean_output: bool) -> String {
     fn write_shift(result: &mut String, shift: i16) {
         if shift < 0 {
             for _ in 0..-shift {
@@ -610,7 +610,7 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
         }
     }
 
-    fn rec(ops: &Vec<BfOp>, result: &mut String, print_optimizations: bool) {
+    fn rec(ops: &Vec<BfOp>, result: &mut String, print_optimizations: bool, clean_output: bool) {
         for op in ops {
             match op {
                 BfOp::Left => {
@@ -633,25 +633,25 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
                 }
                 BfOp::Loop(ops) => {
                     *result += "[";
-                    rec(ops, result, print_optimizations);
+                    rec(ops, result, print_optimizations, clean_output);
                     *result += "]";
                 }
                 BfOp::Clr => {
-                    if print_optimizations {
+                    if print_optimizations && !clean_output {
                         *result += "Clr";
                     } else {
                         *result += "[-]";
                     }
                 }
                 BfOp::Shift(shift) => {
-                    if print_optimizations {
+                    if print_optimizations && !clean_output {
                         *result += &format!("Shift({})", shift);
                     } else {
                         write_shift(result, *shift);
                     }
                 }
                 BfOp::Add(val) => {
-                    if print_optimizations {
+                    if print_optimizations && !clean_output {
                         *result += &format!("Add({})", val);
                     } else {
                         if *val <= 128 {
@@ -666,7 +666,7 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
                     }
                 }
                 BfOp::MoveAdd(shift) => {
-                    if print_optimizations {
+                    if print_optimizations && !clean_output {
                         *result += &format!("MoveAdd({})", shift);
                     } else {
                         *result += "[-";
@@ -677,7 +677,7 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
                     }
                 }
                 BfOp::MoveAdd2(shift1, shift2) => {
-                    if print_optimizations {
+                    if print_optimizations && !clean_output {
                         *result += &format!("MoveAdd2({}, {})", shift1, shift2);
                     } else {
                         *result += "[-";
@@ -690,42 +690,54 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
                     }
                 }
                 BfOp::Comment(msg) => {
-                    if print_optimizations {
+                    if clean_output {
+                        // no output
+                    } else if print_optimizations && !clean_output {
                         *result += &format!("Comment({})", msg);
                     } else {
                         *result += msg;
                     }
                 }
                 BfOp::DebugMessage(msg) => {
-                    if print_optimizations {
+                    if clean_output {
+                        // no output
+                    } else if print_optimizations {
                         *result += &format!("DebugMessage({})", msg);
                     } else {
                         *result += "#";
                     }
                 }
                 BfOp::Crash(msg) => {
-                    if print_optimizations {
+                    if clean_output {
+                        // no output
+                    } else if print_optimizations {
                         *result += &format!("Crash({})", msg);
                     } else {
                         *result += "!";
                     }
                 }
                 BfOp::Breakpoint => {
-                    if print_optimizations {
+                    if clean_output {
+                        // no output
+                    } else if print_optimizations {
                         *result += "Breakpoint";
                     } else {
                         *result += "$";
                     }
                 }
                 BfOp::PrintRegisters => {
-                    if print_optimizations {
+                    if clean_output {
+                        // no output
+                    } else if print_optimizations {
                         *result += "PrintRegisters";
                     } else {
                         *result += "";
                     }
                 }
                 BfOp::CheckScratchIsEmptyFromHere(msg) => {
-                    if print_optimizations {
+                    if clean_output {
+                        // no output
+                    } else if print_optimizations {
                         *result += &format!("CheckScratchIsEmptyFromHere({})", msg);
                     } else {
                         *result += "&";
@@ -736,6 +748,6 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool) -> String {
     }
 
     let mut result = String::new();
-    rec(ops, &mut result, print_optimizations);
+    rec(ops, &mut result, print_optimizations, clean_output);
     result
 }

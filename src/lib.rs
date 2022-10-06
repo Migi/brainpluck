@@ -20,6 +20,7 @@ extern crate nom;
 extern crate num;
 
 use std::fmt::Debug;
+use wasm_bindgen::prelude::*;
 
 use crate::bf::*;
 use crate::cpu::*;
@@ -86,7 +87,7 @@ fn mainc() {
     cpu.moveprint_byte(data.at(0), scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops, false));
+    println!("{}", ops2str(&ops, false, false));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -117,7 +118,7 @@ fn maind() {
     cpu.moveprint_byte(register.at(3), scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops, false));
+    println!("{}", ops2str(&ops, false, false));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -140,7 +141,7 @@ fn maine() {
     cpu.moveprint_register_hex(register, scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops, false));
+    println!("{}", ops2str(&ops, false, false));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -167,8 +168,8 @@ fn mainf() {
 
     let ops = lir2bf(&cpu.into_ops());
     let opt_ops = get_optimized_bf_ops(&ops);
-    println!("{}", ops2str(&opt_ops, true));
-    println!("Num instrs: {}", ops2str(&ops, false).chars().count());
+    println!("{}", ops2str(&opt_ops, true, false));
+    println!("Num instrs: {}", ops2str(&ops, false, true).chars().count());
     let mut state = BfState::new();
     let result = state.run_ops(
         &opt_ops,
@@ -226,9 +227,9 @@ fn main() {
     let (ops, cfg) = sam2lir(linked);
     let ops = lir2bf(&ops);
     let opt_ops = get_optimized_bf_ops(&ops);
-    println!("{}", ops2str(&opt_ops, true));
-    println!("Num instrs: {}", ops2str(&ops, false).chars().count());
-    
+    println!("{}", ops2str(&opt_ops, true, false));
+    println!("Num instrs: {}", ops2str(&ops, false, true).chars().count());
+
     let mut state = BfState::new();
     let result = state.run_ops(
         &opt_ops,
@@ -246,8 +247,50 @@ fn main() {
         }
     }
     state.print_state(&cfg);
-    println!("Num instrs: {}", ops2str(&ops, false).chars().count());
+    println!("Num instrs: {}", ops2str(&ops, false, true).chars().count());
     println!("Instrs executed: {}", state.get_instrs_executed());
+}
+
+#[wasm_bindgen]
+pub struct CompilationResult {
+    sam: String,
+    bf: String,
+}
+
+#[wasm_bindgen]
+impl CompilationResult {
+    #[wasm_bindgen(getter)]
+    pub fn sam(&self) -> String {
+        self.sam.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn bf(&self) -> String {
+        self.bf.clone()
+    }
+}
+
+#[wasm_bindgen]
+pub fn compile(hir: &str) -> CompilationResult {
+    let hir = parse_hir(hir).unwrap();
+
+    let sam = hir2sam(&hir);
+
+    let linked = link_sam_fns(sam);
+    let sam_str = linked.sam_str.clone();
+
+    let (ops, _cfg) = sam2lir(linked);
+    let ops = lir2bf(&ops);
+
+    let bf = ops2str(&ops, false, true);
+
+    let bf = bf
+        .as_bytes()
+        .chunks(50)
+        .map(|buf| format!("{}\n", std::str::from_utf8(buf).unwrap()))
+        .collect::<String>();
+
+    CompilationResult { sam: sam_str, bf }
 }
 
 #[cfg(test)]
@@ -603,7 +646,7 @@ mod test {
     fn test_full_fib() {
         let hir = parse_hir(
             "fn main() {
-                println(fib(2));
+                println(fib(5));
             }
             
             fn fib(x: u8) -> u8 {
@@ -630,6 +673,6 @@ mod test {
 
         let (ops, cfg) = sam2lir(linked);
 
-        test_lir_prog(&ops, "", "2\n", &cfg);
+        test_lir_prog(&ops, "", "8\n", &cfg);
     }
 }

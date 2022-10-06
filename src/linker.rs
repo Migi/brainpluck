@@ -37,10 +37,11 @@ impl SamFn {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CompiledSamProgram {
     pub bytes: Vec<u8>,
     pub fn_start_poss: BTreeMap<String, u32>,
+    pub sam_str: String,
 }
 
 pub fn link_sam_fns(fns: BTreeMap<String, SamFn>) -> CompiledSamProgram {
@@ -156,6 +157,48 @@ pub fn link_sam_fns(fns: BTreeMap<String, SamFn>) -> CompiledSamProgram {
         }
     }
 
+    let mut sam_str = String::new();
+    for f_name in fns.keys() {
+        sam_str += &format!("{}:\n", f_name);
+        for op in &fn_ops[f_name] {
+            sam_str += "    ";
+            sam_str += &match op {
+                SamFnOp::Simple(op) => match op {
+                    SamSOp::Halt => format!("Halt"),
+                    SamSOp::SetX(x) => format!("SetX({})", x),
+                    SamSOp::SetA(x) => format!("SetA({})", x),
+                    SamSOp::ReadAAtB => format!("ReadAAtB"),
+                    SamSOp::ReadXAtB => format!("ReadXAtB"),
+                    SamSOp::WriteAAtB => format!("WriteAAtB"),
+                    SamSOp::WriteXAtB => format!("WriteXAtB"),
+                    SamSOp::PrintCharX => format!("PrintCharX"),
+                    SamSOp::StdinX => format!("StdinX"),
+                    SamSOp::AddConstToB(c) => format!("AddConstToB({})", c),
+                    SamSOp::SubConstFromB(c) => format!("SubConstFromB({})", c),
+                    SamSOp::PrintA => format!("PrintA"),
+                    SamSOp::Ret => format!("Ret"),
+                    SamSOp::AddU32AtBToA => format!("AddU32AtBToA"),
+                    SamSOp::AddU8AtBToX => format!("AddU8AtBToX"),
+                    SamSOp::MulU32AtBToA => format!("MulU32AtBToA"),
+                    SamSOp::MulU8AtBToX => format!("MulU8AtBToX"),
+                    SamSOp::NegX => format!("NegX"),
+                    SamSOp::NegA => format!("NegA"),
+                    SamSOp::MoveXToA => format!("MoveXToA"),
+                },
+                SamFnOp::Call(called_f_name) => {
+                    format!("call \"{}\"", called_f_name)
+                }
+                SamFnOp::JmpToByteOffset(offset) => {
+                    format!("Jump({})", offset)
+                }
+                SamFnOp::JmpToByteOffsetIfX(offset) => {
+                    format!("JumpIfX({})", offset)
+                }
+            };
+            sam_str += "\n";
+        }
+    }
+
     // calculate all functions' first byte positions
     let mut fn_start_poss = BTreeMap::new();
     {
@@ -189,5 +232,6 @@ pub fn link_sam_fns(fns: BTreeMap<String, SamFn>) -> CompiledSamProgram {
     CompiledSamProgram {
         bytes,
         fn_start_poss,
+        sam_str,
     }
 }
