@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Rust-like to Brainfuck compiler</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+      }
+      .container {
+        display: flex;
+      }
+      .column {
+        flex: 30%;
+        height: 600px;
+        padding: 10px;
+        margin: 5px;
+        background-color: #ffffff;
+        text-align: center;
+      }
+      .smallcolumn {
+        flex: 5%;
+        text-align: center;
+        height: 600px;
+        position: relative;
+      }
+      .smallcolumncenter {
+        display: block;
+        margin: 0;
+        padding: 5pt;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+      }
+      .arrow {
+        font-size: 30pt;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>This page contains webassembly and javascript content, please enable javascript in your browser.</noscript>
+    <h1>Rust(ish) to Brainfuck compiler</h1>
+    <div class="container">
+      <div class="column">
+        <p>Select example (or write your own):
+          <select id="example_select"></select>
+        </p>
+        <textarea id="hir_code" rows="30" cols="60"></textarea>
+      </div>
+      <div class="smallcolumn"><div class="smallcolumncenter">
+        <p class="arrow">→</p>
+        <p><button id="compile_button">Compile!</button></p>
+      </div></div>
+      <div class="column">
+        <p>Compiled "assembly" code:
+        </p>
+        <textarea id="compiled_sam" rows="30" cols="60" disabled></textarea>
+      </div>
+      <div class="smallcolumn"><div class="smallcolumncenter">
+        <p class="arrow">→</p>
+      </div></div>
+      <div class="column">
+        <p>Compiled brainfuck code: <button id="bf_copy_button">Copy</button>
+        </p>
+        <textarea id="compiled_bf" rows="30" cols="60" disabled></textarea>
+      </div>
+    </div>
+    <script src="./bootstrap.js"></script>
+  </body>
+</html>
