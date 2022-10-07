@@ -10,7 +10,7 @@ fn main() {
 fn fib(x: u8) -> u8 {
     if x {
         let x_minus_1 : u8 = x - 1;
-        if x_minus_1 {
+        if x - 1 {
             let x_minus_2 : u8 = x_minus_1 - 1;
             let f1 : u8 = fib(x_minus_1);
             let f2 : u8 = fib(x_minus_2);

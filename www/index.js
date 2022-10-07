@@ -13,11 +13,9 @@ examples["Fibonacci"] =
 
 fn fib(x: u8) -> u8 {
     if x {
-        let x_minus_1 : u8 = x - 1;
-        if x_minus_1 {
-            let x_minus_2 : u8 = x_minus_1 - 1;
-            let f1 : u8 = fib(x_minus_1);
-            let f2 : u8 = fib(x_minus_2);
+        if x - 1 {
+            let f1 : u8 = fib(x - 1);
+            let f2 : u8 = fib(x - 2);
             f1 + f2
         } else {
             1
@@ -40,7 +38,9 @@ for (let example_name of examples_order) {
 document.getElementById("hir_code").textContent = examples[default_example];
 
 function clickCompile() {
-    let hir = document.getElementById("hir_code").textContent;
+    let hir = document.getElementById("hir_code").value;
+
+    console.log(hir);
 
     let compiled = wasm.compile(hir);
 
@@ -52,8 +52,6 @@ document.getElementById("compile_button").onclick = clickCompile;
 
 document.getElementById("bf_copy_button").onclick = function() {
     let textarea = document.getElementById("compiled_bf");
-    textarea.disabled = false;
     textarea.select();
     document.execCommand("copy");
-    textarea.disabled = true;
 }
