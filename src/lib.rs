@@ -348,7 +348,10 @@ pub fn debug_program(hir: &str, input: &str) -> DebugResult {
             .run_op(&op, &mut r, &mut w)
             .unwrap_or_else(|e| output += &format!("Error: {:?}", e));
         if !w.is_empty() {
-            output += &format!("Received output: {:?}\n", String::from_utf8_lossy(w.as_bytes()).to_string());
+            output += &format!(
+                "Received output: {:?}\n",
+                String::from_utf8_lossy(w.as_bytes()).to_string()
+            );
         }
     }
 

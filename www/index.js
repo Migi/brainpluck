@@ -5,9 +5,13 @@ examples["Fibonacci"] =
 `fn main() {
     let y : u8 = 5;
     while y {
+        print("fib(");
+        print(y);
+        print(") = ");
         println(fib(y));
         y = y - 1;
     };
+    print("fib(0) = ");
     println(fib(y));
 }
 

@@ -155,6 +155,7 @@ fn type_size(typ: VarType) -> u32 {
         VarType::U8 => 1,
         VarType::U32 => 4,
         VarType::Unit => 0,
+        VarType::StringLiteral => 0,
     }
 }
 
@@ -304,7 +305,8 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     },
                     None => false_type,
                 }
-            }
+            },
+            Expr::StringLiteral(_) => Some(VarType::StringLiteral)
         }
     }
 
@@ -357,6 +359,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 self.read_a_at(a);
                 self.write_a_at(b);
             }
+            VarType::StringLiteral => {}
         }
     }
 
@@ -401,6 +404,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                             self.set_a(lit);
                             self.write_a_at(local);
                         }
+                        VarType::StringLiteral => unreachable!()
                     }
                 }
             },
@@ -495,6 +499,9 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                         VarType::Unit => {
                             panic!("Unit binop?")
                         }
+                        VarType::StringLiteral => {
+                            panic!("Scope with type string literal?")
+                        }
                     }
                 });
                 match typ {
@@ -528,6 +535,9 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     }
                     VarType::Unit => {
                         panic!("Unit binop?")
+                    }
+                    VarType::StringLiteral => {
+                        panic!("Binop involving string literal not implemented")
                     }
                 }
             }
@@ -575,6 +585,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 self.out.arena.blocks[true_exit_index].next_block_index = Some(new_index);
                 self.out.arena.blocks[false_exit_index].next_block_index = Some(new_index);
             }
+            Expr::StringLiteral(_) => {}
         }
     }
 
@@ -587,6 +598,18 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             let arg = &fncall.args[0];
             let typ = self.get_expr_type(arg).unwrap_or(VarType::U32);
             match typ {
+                VarType::StringLiteral => {
+                    if let Expr::StringLiteral(s) = arg {
+                        for b in s.bytes() {
+                            self.out.add_op(SamLOp::Simple(SamSOp::SetX(b)));
+                            self.out.add_op(SamLOp::Simple(SamSOp::PrintCharX));
+                        }
+                    }
+                    if fncall.fn_name == "println" {
+                        self.out.add_op(SamLOp::Simple(SamSOp::SetX(10)));
+                        self.out.add_op(SamLOp::Simple(SamSOp::PrintCharX));
+                    }
+                }
                 VarType::U8 => {
                     self.eval_expr(arg, Dest::X);
                     if fncall.fn_name == "print" {

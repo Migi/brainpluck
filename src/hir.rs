@@ -3,7 +3,7 @@ use nom::character::complete::digit1;
 use nom::{
     branch::alt,
     bytes::complete::{escaped, tag, take, take_while},
-    character::complete::{alphanumeric1 as alphanumeric, anychar, one_of},
+    character::complete::{alphanumeric1 as alphanumeric, anychar, none_of, one_of},
     combinator::{complete, map, opt},
     error::{context, convert_error, ErrorKind, ParseError, VerboseError},
     multi::{fold_many1, many0, many1, separated_list},
@@ -38,6 +38,7 @@ pub struct FnCall {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(BigUint),
+    StringLiteral(String),
     VarRef(String),
     BinOp(BinOp),
     FnCall(FnCall),
@@ -50,6 +51,7 @@ pub enum VarType {
     Unit,
     U8,
     U32,
+    StringLiteral,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +145,15 @@ fn ws<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
     take_while(move |c| chars.contains(c))(i)
 }
 
+fn str_literal<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+    let (i, _) = ws(i)?;
+    Ok(delimited(
+        tag("\""),
+        escaped(none_of("\\\""), '\\', one_of(r#""n\"#)),
+        tag("\""),
+    )(i)?)
+}
+
 fn biguint<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, BigUint, E> {
     let (i, _) = ws(i)?;
     map(digit1, |s| {
@@ -153,6 +164,7 @@ fn biguint<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, BigUint, 
 fn factor<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     alt((
         map(biguint, |u| Expr::Literal(u)),
+        map(str_literal, |s| Expr::StringLiteral(s.to_owned())),
         map(if_else, |i| Expr::IfElse(Box::new(i))),
         map(fncall, |c| Expr::FnCall(c)),
         map(ident, |s| Expr::VarRef(s.to_owned())),
