@@ -685,18 +685,20 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 self.out.arena.blocks[false_exit_index].next_block_index = Some(new_index);
             }
             Stmt::WhileLoop(w) => {
-                if self.out.arena.blocks[self.out.block_index].ops.len() > 0 {
-                    self.split_to_new_block();
-                }
-                let start_block_index = self.out.block_index;
                 let start_b_offset = self.cur_b_offset;
-                self.eval_expr(&w.cond, Dest::X);
                 let (inner_entry_index, inner_exit_index) = self.block(|cpu| {
                     cpu.eval_expr(&w.inner, Dest::None);
                     cpu.goto_b_offset(start_b_offset);
                 });
-                self.out.add_op(SamLOp::JmpToBlockIfX(inner_entry_index));
-                self.out.arena.blocks[inner_exit_index].next_block_index = Some(start_block_index);
+                let (cond_entry_index, cond_exit_index) = self.block(|cpu| {
+                    cpu.eval_expr(&w.cond, Dest::X);
+                    cpu.goto_b_offset(start_b_offset);
+                    cpu.out.add_op(SamLOp::JmpToBlockIfX(inner_entry_index));
+                });
+                let (old_index, new_index) = self.split_to_new_block();
+                self.out.arena.blocks[old_index].next_block_index = Some(cond_entry_index);
+                self.out.arena.blocks[inner_exit_index].next_block_index = Some(cond_entry_index);
+                self.out.arena.blocks[cond_exit_index].next_block_index = Some(new_index);
             }
             Stmt::Return(s) => {
                 self.ret(Some(&s.expr));

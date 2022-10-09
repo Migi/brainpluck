@@ -289,7 +289,8 @@ impl SamState {
         self.cells[at as usize] = val;
     }
 
-    pub fn decode_next_op(&self) -> SamOp {
+    pub fn decode_next_op(&mut self) -> SamOp {
+        self.reserve_cells(self.instr_ptr + 5);
         decode_sam_op(&self.cells[self.instr_ptr as usize..])
     }
 
@@ -298,7 +299,6 @@ impl SamState {
         reader: &mut impl Read,
         writer: &mut impl Write,
     ) -> Result<(), SamRunOpError> {
-        self.reserve_cells(self.instr_ptr + 5);
         let op = self.decode_next_op();
         let res = self.run_op(&op, reader, writer)?;
         Ok(res)

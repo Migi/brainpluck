@@ -16,11 +16,12 @@ mod lir2bf;
 mod sam;
 mod sam2lir;
 
+extern crate console_error_panic_hook;
 extern crate nom;
 extern crate num;
 
-use std::fmt::Debug;
 use nom::AsBytes;
+use std::fmt::Debug;
 use wasm_bindgen::prelude::*;
 
 use crate::bf::*;
@@ -252,6 +253,13 @@ fn main() {
     println!("Instrs executed: {}", state.get_instrs_executed());
 }
 
+/// Returns the version of the program.
+#[wasm_bindgen]
+pub fn init_brainpluck() -> String {
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    "0.0.3".to_owned()
+}
+
 #[wasm_bindgen]
 pub struct CompilationResult {
     sam: String,
@@ -295,13 +303,71 @@ pub fn compile(hir: &str) -> CompilationResult {
 }
 
 #[wasm_bindgen]
+pub struct DebugResult {
+    sam: String,
+    output: String,
+}
+
+#[wasm_bindgen]
+impl DebugResult {
+    #[wasm_bindgen(getter)]
+    pub fn sam(&self) -> String {
+        self.sam.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn output(&self) -> String {
+        self.output.clone()
+    }
+}
+
+#[wasm_bindgen]
+pub fn debug_program(hir: &str, input: &str) -> DebugResult {
+    let hir = parse_hir(hir).unwrap();
+
+    let sam = hir2sam(&hir);
+
+    let linked = link_sam_fns(sam);
+    let sam_str = linked.sam_str.clone();
+
+    let mut samstate = SamState::new(linked);
+
+    let mut output = String::new();
+
+    let mut r = input.as_bytes();
+
+    while !samstate.halted {
+        let op = samstate.decode_next_op();
+        output += &format!(
+            "x: {:3} a: {:10} b: {:10} i: {:10}\n",
+            samstate.x, samstate.a, samstate.b, samstate.instr_ptr
+        );
+        output += &format!("Instruction: {:?}\n", op);
+        let mut w = Vec::new();
+        let _res = samstate
+            .run_op(&op, &mut r, &mut w)
+            .unwrap_or_else(|e| output += &format!("Error: {:?}", e));
+        if !w.is_empty() {
+            output += &format!("Received output: {:?}\n", String::from_utf8_lossy(w.as_bytes()).to_string());
+        }
+    }
+
+    DebugResult {
+        sam: sam_str,
+        output,
+    }
+}
+
+#[wasm_bindgen]
 pub fn parse_and_run_bf(bf: &str, input: &str) -> String {
     let ops = parse_bf(bf).unwrap_or_else(|e| panic!("Unable to parse bf: {:?}", e));
     let opt_ops = get_optimized_bf_ops(&ops);
     let mut bf_state = BfState::new();
     let mut r = input.as_bytes();
     let mut w = Vec::new();
-    bf_state.run_ops(&opt_ops, &mut r, &mut w, None).expect("error running bf program");
+    bf_state
+        .run_ops(&opt_ops, &mut r, &mut w, None)
+        .expect("error running bf program");
     String::from_utf8_lossy(w.as_bytes()).to_string()
 }
 
