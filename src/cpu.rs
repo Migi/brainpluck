@@ -2203,6 +2203,43 @@ impl<'c> Cpu<'c> {
         }
     }
 
+    /// We write -1 if a < b, 0 if a = b, and 1 if a > b to cmp_result.
+    /// Initially cmp_result should be 0.
+    pub fn cmp_2_u8s(&mut self, a: Pos, b: Pos, cmp_result: Pos, scratch_track: ScratchTrack) {
+        let ([a_cpy, b_cpy, keep_going], scratch_track) = scratch_track.split_3();
+        self.copy_byte_autoscratch(a, a_cpy, scratch_track);
+        self.copy_byte_autoscratch(b, b_cpy, scratch_track);
+        self.inc_at(keep_going);
+        self.loop_while(keep_going, |cpu| {
+            cpu.if_nonzero_else(
+                a_cpy,
+                scratch_track,
+                |cpu, scratch_track| {
+                    cpu.if_nonzero_else(
+                        b_cpy,
+                        scratch_track,
+                        |cpu, _| {
+                            cpu.dec_at(a_cpy);
+                            cpu.dec_at(b_cpy);
+                        },
+                        |cpu, _| {
+                            cpu.dec_at(keep_going);
+                            cpu.inc_at(cmp_result);
+                        },
+                    );
+                },
+                |cpu, scratch_track| {
+                    cpu.dec_at(keep_going);
+                    cpu.if_nonzero(b_cpy, scratch_track, |cpu, _| {
+                        cpu.dec_at(cmp_result);
+                    });
+                },
+            );
+        });
+        self.clr_at(a_cpy);
+        self.clr_at(b_cpy);
+    }
+
     /// Adds a*b to out
     pub fn mul_binregisters(
         &mut self,

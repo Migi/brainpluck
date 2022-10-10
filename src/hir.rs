@@ -21,6 +21,17 @@ pub enum BinOpKind {
     Minus,
     Mul,
     Div,
+    Cmp(CmpKind),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum CmpKind {
+    GT,
+    GE,
+    EQ,
+    LT,
+    LE,
+    NE,
 }
 
 #[derive(Debug, Clone)]
@@ -196,14 +207,50 @@ fn term<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     }
 }
 
-fn expr<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
+fn cmp_term<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     let (i, a) = term(i)?;
+    let (i, _) = ws(i)?;
+    let (i, kind) = opt(alt((
+        tag(">="),
+        tag(">"),
+        tag("=="),
+        tag("<="),
+        tag("<"),
+        tag("!="),
+    )))(i)?;
+    let (i, _) = ws(i)?;
+    match kind {
+        Some(kind) => {
+            let (i, b) = term(i)?;
+            let kind = BinOpKind::Cmp(match kind {
+                ">" => CmpKind::GT,
+                ">=" => CmpKind::GE,
+                "==" => CmpKind::EQ,
+                "<" => CmpKind::LT,
+                "<=" => CmpKind::LE,
+                "!=" => CmpKind::NE,
+                _ => unreachable!(),
+            });
+            Ok((
+                i,
+                Expr::BinOp(BinOp {
+                    args: Box::new((a, b)),
+                    kind,
+                }),
+            ))
+        }
+        None => Ok((i, a)),
+    }
+}
+
+fn expr<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
+    let (i, a) = cmp_term(i)?;
     let (i, _) = ws(i)?;
     let (i, kind) = opt(alt((tag("+"), tag("-"))))(i)?;
     let (i, _) = ws(i)?;
     match kind {
         Some(kind) => {
-            let (i, b) = term(i)?;
+            let (i, b) = cmp_term(i)?;
             let kind = match kind {
                 "+" => BinOpKind::Plus,
                 "-" => BinOpKind::Minus,

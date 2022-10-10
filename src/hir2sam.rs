@@ -263,20 +263,24 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             Expr::Literal(_lit) => None,
             Expr::VarRef(varref) => Some(self.locals.get(varref).typ),
             Expr::BinOp(binop) => {
-                let a_type = self.get_expr_type(&binop.args.0);
-                let b_type = self.get_expr_type(&binop.args.1);
-                match a_type {
-                    Some(a_type) => match b_type {
-                        Some(b_type) => {
-                            if a_type == b_type {
-                                Some(a_type)
-                            } else {
-                                panic!("Binop on incompatible types");
+                if let BinOpKind::Cmp(_) = binop.kind {
+                    Some(VarType::U8)
+                } else {
+                    let a_type = self.get_expr_type(&binop.args.0);
+                    let b_type = self.get_expr_type(&binop.args.1);
+                    match a_type {
+                        Some(a_type) => match b_type {
+                            Some(b_type) => {
+                                if a_type == b_type {
+                                    Some(a_type)
+                                } else {
+                                    panic!("Binop on incompatible types");
+                                }
                             }
-                        }
-                        None => Some(a_type),
-                    },
-                    None => b_type,
+                            None => Some(a_type),
+                        },
+                        None => b_type,
+                    }
                 }
             }
             Expr::FnCall(f) => Some(
@@ -305,8 +309,8 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     },
                     None => false_type,
                 }
-            },
-            Expr::StringLiteral(_) => Some(VarType::StringLiteral)
+            }
+            Expr::StringLiteral(_) => Some(VarType::StringLiteral),
         }
     }
 
@@ -404,7 +408,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                             self.set_a(lit);
                             self.write_a_at(local);
                         }
-                        VarType::StringLiteral => unreachable!()
+                        VarType::StringLiteral => unreachable!(),
                     }
                 }
             },
@@ -475,6 +479,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                                 BinOpKind::Div => {
                                     unimplemented!()
                                 }
+                                BinOpKind::Cmp(cmp_kind) => {
+                                    cpu.out.add_op(SamLOp::Simple(SamSOp::CmpU8AtBWithX));
+                                    process_cmp_result(cpu, cmp_kind);
+                                }
                             }
                         }
                         VarType::U32 => {
@@ -493,6 +501,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                                 }
                                 BinOpKind::Div => {
                                     unimplemented!()
+                                }
+                                BinOpKind::Cmp(cmp_kind) => {
+                                    cpu.out.add_op(SamLOp::Simple(SamSOp::CmpU32AtBWithA));
+                                    process_cmp_result(cpu, cmp_kind);
                                 }
                             }
                         }
@@ -727,5 +739,28 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 self.ret(Some(&s.expr));
             }
         }
+    }
+}
+
+fn process_cmp_result(cpu: &mut SamCpu, cmp_kind: CmpKind) {
+    match cmp_kind {
+        CmpKind::GT => {
+            cpu.out.add_op(SamLOp::Simple(SamSOp::AddConstToX(255)));
+            cpu.out.add_op(SamLOp::Simple(SamSOp::NotX));
+        }
+        CmpKind::GE => {
+            cpu.out.add_op(SamLOp::Simple(SamSOp::AddConstToX(1)));
+        }
+        CmpKind::EQ => {
+            cpu.out.add_op(SamLOp::Simple(SamSOp::NotX));
+        }
+        CmpKind::LT => {
+            cpu.out.add_op(SamLOp::Simple(SamSOp::AddConstToX(1)));
+            cpu.out.add_op(SamLOp::Simple(SamSOp::NotX));
+        }
+        CmpKind::LE => {
+            cpu.out.add_op(SamLOp::Simple(SamSOp::AddConstToX(255)));
+        }
+        CmpKind::NE => {}
     }
 }

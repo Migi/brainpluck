@@ -184,6 +184,10 @@ pub fn link_sam_fns(fns: BTreeMap<String, SamFn>) -> CompiledSamProgram {
                     SamSOp::NegX => format!("NegX"),
                     SamSOp::NegA => format!("NegA"),
                     SamSOp::MoveXToA => format!("MoveXToA"),
+                    SamSOp::NotX => format!("NotX"),
+                    SamSOp::AddConstToX(c) => format!("AddConstToX({})", c),
+                    SamSOp::CmpU8AtBWithX => format!("CmpU8AtBWithX"),
+                    SamSOp::CmpU32AtBWithA => format!("CmpU32AtBWithA"),
                 },
                 SamFnOp::Call(called_f_name) => {
                     format!("call \"{}\"", called_f_name)

@@ -27,6 +27,12 @@ pub const OPCODE_MUL_U32_AT_B_TO_A: u8 = 19;
 pub const OPCODE_NEG_A: u8 = 20;
 pub const OPCODE_NEG_X: u8 = 21;
 pub const OPCODE_MOVE_X_TO_A: u8 = 22;
+pub const OPCODE_NOT_X: u8 = 23;
+pub const OPCODE_ADD_CONST_TO_X: u8 = 24;
+pub const OPCODE_CMP_U8_AT_B_WITH_X: u8 = 25;
+pub const OPCODE_CMP_U32_AT_B_WITH_A: u8 = 26;
+
+pub const NUM_OPCODES: u8 = 27;
 
 #[derive(Debug, Copy, Clone)]
 pub enum SamSOp {
@@ -50,6 +56,10 @@ pub enum SamSOp {
     NegA,
     NegX,
     MoveXToA,
+    NotX,
+    AddConstToX(u8),
+    CmpU8AtBWithX,
+    CmpU32AtBWithA,
 }
 
 #[derive(Debug)]
@@ -128,6 +138,18 @@ impl SamSOp {
             }
             SamSOp::MoveXToA => {
                 vec![OPCODE_MOVE_X_TO_A]
+            }
+            SamSOp::NotX => {
+                vec![OPCODE_NOT_X]
+            }
+            SamSOp::AddConstToX(val) => {
+                vec![OPCODE_ADD_CONST_TO_X, *val]
+            }
+            SamSOp::CmpU8AtBWithX => {
+                vec![OPCODE_CMP_U8_AT_B_WITH_X]
+            }
+            SamSOp::CmpU32AtBWithA => {
+                vec![OPCODE_CMP_U32_AT_B_WITH_A]
             }
         }
     }
@@ -221,6 +243,10 @@ fn decode_sam_op(slice: &[u8]) -> SamOp {
         OPCODE_NEG_A => SamOp::Simple(SamSOp::NegA),
         OPCODE_NEG_X => SamOp::Simple(SamSOp::NegX),
         OPCODE_MOVE_X_TO_A => SamOp::Simple(SamSOp::MoveXToA),
+        OPCODE_NOT_X => SamOp::Simple(SamSOp::NotX),
+        OPCODE_ADD_CONST_TO_X => SamOp::Simple(SamSOp::AddConstToX(slice[1])),
+        OPCODE_CMP_U8_AT_B_WITH_X => SamOp::Simple(SamSOp::CmpU8AtBWithX),
+        OPCODE_CMP_U32_AT_B_WITH_A => SamOp::Simple(SamSOp::CmpU32AtBWithA),
         _ => panic!("decoding invalid sam op!"),
     }
 }
@@ -429,6 +455,32 @@ impl SamState {
                     }
                     SamSOp::MoveXToA => {
                         self.a = self.x as u32;
+                    }
+                    SamSOp::NotX => {
+                        if self.x == 0 {
+                            self.x = 1;
+                        } else {
+                            self.x = 0;
+                        }
+                    }
+                    SamSOp::AddConstToX(val) => {
+                        self.x += *val;
+                    }
+                    SamSOp::CmpU8AtBWithX => {
+                        let atb = self.read_u8_at(self.b);
+                        self.x = match atb.cmp(&self.x) {
+                            std::cmp::Ordering::Greater => 1,
+                            std::cmp::Ordering::Equal => 0,
+                            std::cmp::Ordering::Less => 255,
+                        }
+                    }
+                    SamSOp::CmpU32AtBWithA => {
+                        let atb = self.read_u32_at(self.b);
+                        self.x = match atb.cmp(&self.a) {
+                            std::cmp::Ordering::Greater => 1,
+                            std::cmp::Ordering::Equal => 0,
+                            std::cmp::Ordering::Less => 255,
+                        }
                     }
                 }
                 if !jumped {

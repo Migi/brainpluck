@@ -1,23 +1,21 @@
 import * as wasm from "wasm-brainfuc";
 
 let examples = {};
-examples["Fibonacci"] = 
+examples["Slow Fibonacci"] = 
 `fn main() {
-    let y : u8 = 5;
-    while y {
+    let y : u8 = 0;
+    while y <= 5 {
         print("fib(");
         print(y);
         print(") = ");
         println(fib(y));
-        y = y - 1;
+        y = y + 1;
     };
-    print("fib(0) = ");
-    println(fib(y));
 }
 
 fn fib(x: u8) -> u8 {
-    if x {
-        if x - 1 {
+    if x > 0 {
+        if x > 1 {
             let f1 : u8 = fib(x - 1);
             let f2 : u8 = fib(x - 2);
             f1 + f2
@@ -31,24 +29,23 @@ fn fib(x: u8) -> u8 {
 
 examples["Fast Fibonacci"] = 
 `fn main() {
-    println(fib(27));
-}
-
-fn fib(x: u8) -> u32 {
-    let y : u8 = 0;
-    let fib_y : u32 = 1;
-    let fib_y_minus_1 : u32 = 0;
-    while y - x {
-        let prev_fib_y : u32 = fib_y;
-        fib_y = fib_y + fib_y_minus_1;
-        fib_y_minus_1 = prev_fib_y;
-        y = y + 1;
+    let x : u8 = 0;
+    let fib_x : u32 = 1;
+    let fib_x_minus_1 : u32 = 0;
+    while x <= 46 {
+        print("fib(");
+        print(x);
+        print(") = ");
+        println(fib_x);
+        let prev_fib_x : u32 = fib_x;
+        fib_x = fib_x + fib_x_minus_1;
+        fib_x_minus_1 = prev_fib_x;
+        x = x + 1;
     };
-    fib_y
 }`;
 
-let examples_order = ["Fibonacci", "Fast Fibonacci"];
-let default_example = "Fibonacci";
+let examples_order = ["Slow Fibonacci", "Fast Fibonacci"];
+let default_example = "Slow Fibonacci";
 
 for (let example_name of examples_order) {
     let option = document.createElement("option");
