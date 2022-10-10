@@ -319,11 +319,11 @@ impl BfState {
         }
     }
 
-    pub fn run_op(
+    pub fn run_op_f(
         &mut self,
         op: &BfOp,
-        reader: &mut impl Read,
-        writer: &mut impl Write,
+        get_char_in: &mut impl FnMut() -> Result<u8, RunOpError>,
+        write_char_out: &mut impl FnMut(u8) -> Result<(), RunOpError>,
         cpu_config: Option<&CpuConfig>,
     ) -> Result<(), RunOpError> {
         self.instrs_executed += 1;
@@ -348,44 +348,15 @@ impl BfState {
                 self.cells[self.cell_ptr] = self.cells[self.cell_ptr].wrapping_sub(1);
             }
             BfOp::In => {
-                let mut buf: [u8; 1] = [0; 1];
-                match reader.read_exact(&mut buf) {
-                    Ok(()) => {
-                        // simply ignore \r
-                        let c = buf[0];
-                        if c != 13 {
-                            self.cells[self.cell_ptr] = c;
-                        }
-                    }
-                    Err(e) => match e.kind() {
-                        std::io::ErrorKind::UnexpectedEof => {
-                            self.cells[self.cell_ptr] = 0;
-                        }
-                        _ => {
-                            return Err(RunOpError::ReaderErr(e));
-                        }
-                    },
-                }
+                self.cells[self.cell_ptr] = get_char_in()?;
             }
             BfOp::Out => {
                 let byte = self.cells[self.cell_ptr];
-                let buf: [u8; 1] = [byte];
-                match writer.write_all(&buf) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(RunOpError::WriterErr(e));
-                    }
-                }
-                match writer.flush() {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(RunOpError::WriterErr(e));
-                    }
-                }
+                write_char_out(byte)?;
             }
             BfOp::Loop(ops) => {
                 while self.cells[self.cell_ptr] != 0 {
-                    self.run_ops(ops, reader, writer, cpu_config)?;
+                    self.run_ops_f(ops, &mut *get_char_in, &mut *write_char_out, cpu_config)?;
                 }
             }
             BfOp::Clr => {
@@ -458,8 +429,58 @@ impl BfState {
         writer: &mut impl Write,
         cpu_config: Option<&CpuConfig>,
     ) -> Result<(), RunOpError> {
+        self.run_ops_f(
+            ops,
+            &mut move || {
+                let mut buf: [u8; 1] = [0; 1];
+                loop {
+                    match reader.read_exact(&mut buf) {
+                        Ok(()) => {
+                            // simply ignore \r
+                            let c = buf[0];
+                            if c != 13 {
+                                return Ok(c);
+                            }
+                        }
+                        Err(e) => match e.kind() {
+                            std::io::ErrorKind::UnexpectedEof => {
+                                return Ok(0);
+                            }
+                            _ => {
+                                return Err(RunOpError::ReaderErr(e));
+                            }
+                        },
+                    }
+                }
+            },
+            &mut move |byte| {
+                let buf: [u8; 1] = [byte];
+                match writer.write_all(&buf) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        return Err(RunOpError::WriterErr(e));
+                    }
+                }
+                match writer.flush() {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        return Err(RunOpError::WriterErr(e));
+                    }
+                }
+            },
+            cpu_config,
+        )
+    }
+
+    pub fn run_ops_f(
+        &mut self,
+        ops: &[BfOp],
+        get_char_in: &mut impl FnMut() -> Result<u8, RunOpError>,
+        write_char_out: &mut impl FnMut(u8) -> Result<(), RunOpError>,
+        cpu_config: Option<&CpuConfig>,
+    ) -> Result<(), RunOpError> {
         for op in ops {
-            self.run_op(op, reader, writer, cpu_config)?;
+            self.run_op_f(op, &mut *get_char_in, &mut *write_char_out, cpu_config)?;
         }
         Ok(())
     }

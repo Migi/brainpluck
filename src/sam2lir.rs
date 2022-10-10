@@ -200,6 +200,10 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
     should_goto_b_instr_set.insert(OPCODE_MUL_U32_AT_B_TO_A);
     should_goto_b_instr_set.insert(OPCODE_CMP_U8_AT_B_WITH_X);
     should_goto_b_instr_set.insert(OPCODE_CMP_U32_AT_B_WITH_A);
+    should_goto_b_instr_set.insert(OPCODE_SET_X_TO_U8_AT_B_DIV_BY_X);
+    should_goto_b_instr_set.insert(OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A);
+    should_goto_b_instr_set.insert(OPCODE_SET_X_TO_U8_AT_B_MOD_X);
+    should_goto_b_instr_set.insert(OPCODE_SET_A_TO_U32_AT_B_MOD_A);
 
     cpu.loop_while(not_halted, |cpu| {
         goto_ptr(cpu, scratch_track, iptr, cur_ptr, all_registers);
@@ -685,6 +689,102 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
 
             cpu.clr_binregister(a_unpacked, scratch_track);
             cpu.clr_binregister(atb_unpacked, scratch_track);
+        });
+        cur_instr_num += 1;
+        cpu.dec_at(instr_cpy);
+
+        cpu.if_zero(instr_cpy, scratch_track, |cpu, scratch_track| {
+            assert_eq!(cur_instr_num, OPCODE_SET_X_TO_U8_AT_B_DIV_BY_X);
+            if print_debug_messages {
+                cpu.debug_message("Instruction: SetXToU8AtBDivByX");
+            }
+            cpu.add_const_to_byte(inc_iptr_by, 1);
+
+            let ([div, rem], scratch_track) = scratch_track.split_2();
+            cpu.div_u8s(atb_1.at(0), x.at(0), div, rem, scratch_track);
+            cpu.clr_at(x.at(0));
+            cpu.moveadd_byte(div, x.at(0));
+            cpu.clr_at(rem);
+        });
+        cur_instr_num += 1;
+        cpu.dec_at(instr_cpy);
+
+        cpu.if_zero(instr_cpy, scratch_track, |cpu, scratch_track| {
+            assert_eq!(cur_instr_num, OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A);
+            if print_debug_messages {
+                cpu.debug_message("Instruction: SetAToU32AtBDivByA");
+            }
+            cpu.add_const_to_byte(inc_iptr_by, 1);
+
+            let (a_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            cpu.unpack_register(a, a_unpacked, scratch_track, false);
+            cpu.clr_register(a, scratch_track);
+            let (atb_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            cpu.unpack_register(atb_4, atb_unpacked, scratch_track, false);
+            let (div_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            let (rem_unpacked, scratch_track) = scratch_track.split_binregister(32);
+
+            cpu.div_binregisters(
+                atb_unpacked,
+                a_unpacked,
+                div_unpacked,
+                rem_unpacked,
+                scratch_track,
+            );
+            cpu.pack_binregister(div_unpacked, a, scratch_track, true);
+
+            cpu.clr_binregister(a_unpacked, scratch_track);
+            cpu.clr_binregister(atb_unpacked, scratch_track);
+            cpu.clr_binregister(div_unpacked, scratch_track);
+            cpu.clr_binregister(rem_unpacked, scratch_track);
+        });
+        cur_instr_num += 1;
+        cpu.dec_at(instr_cpy);
+
+        cpu.if_zero(instr_cpy, scratch_track, |cpu, scratch_track| {
+            assert_eq!(cur_instr_num, OPCODE_SET_X_TO_U8_AT_B_MOD_X);
+            if print_debug_messages {
+                cpu.debug_message("Instruction: SetXToU8AtBModX");
+            }
+            cpu.add_const_to_byte(inc_iptr_by, 1);
+
+            let ([div, rem], scratch_track) = scratch_track.split_2();
+            cpu.div_u8s(atb_1.at(0), x.at(0), div, rem, scratch_track);
+            cpu.clr_at(x.at(0));
+            cpu.moveadd_byte(rem, x.at(0));
+            cpu.clr_at(div);
+        });
+        cur_instr_num += 1;
+        cpu.dec_at(instr_cpy);
+
+        cpu.if_zero(instr_cpy, scratch_track, |cpu, scratch_track| {
+            assert_eq!(cur_instr_num, OPCODE_SET_A_TO_U32_AT_B_MOD_A);
+            if print_debug_messages {
+                cpu.debug_message("Instruction: SetAToU32AtBModA");
+            }
+            cpu.add_const_to_byte(inc_iptr_by, 1);
+
+            let (a_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            cpu.unpack_register(a, a_unpacked, scratch_track, false);
+            cpu.clr_register(a, scratch_track);
+            let (atb_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            cpu.unpack_register(atb_4, atb_unpacked, scratch_track, false);
+            let (div_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            let (rem_unpacked, scratch_track) = scratch_track.split_binregister(32);
+
+            cpu.div_binregisters(
+                atb_unpacked,
+                a_unpacked,
+                div_unpacked,
+                rem_unpacked,
+                scratch_track,
+            );
+            cpu.pack_binregister(rem_unpacked, a, scratch_track, true);
+
+            cpu.clr_binregister(a_unpacked, scratch_track);
+            cpu.clr_binregister(atb_unpacked, scratch_track);
+            cpu.clr_binregister(div_unpacked, scratch_track);
+            cpu.clr_binregister(rem_unpacked, scratch_track);
         });
         cur_instr_num += 1;
         cpu.dec_at(instr_cpy);

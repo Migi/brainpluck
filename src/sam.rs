@@ -31,8 +31,12 @@ pub const OPCODE_NOT_X: u8 = 23;
 pub const OPCODE_ADD_CONST_TO_X: u8 = 24;
 pub const OPCODE_CMP_U8_AT_B_WITH_X: u8 = 25;
 pub const OPCODE_CMP_U32_AT_B_WITH_A: u8 = 26;
+pub const OPCODE_SET_X_TO_U8_AT_B_DIV_BY_X: u8 = 27;
+pub const OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A: u8 = 28;
+pub const OPCODE_SET_X_TO_U8_AT_B_MOD_X: u8 = 29;
+pub const OPCODE_SET_A_TO_U32_AT_B_MOD_A: u8 = 30;
 
-pub const NUM_OPCODES: u8 = 27;
+pub const NUM_OPCODES: u8 = 31;
 
 #[derive(Debug, Copy, Clone)]
 pub enum SamSOp {
@@ -60,6 +64,10 @@ pub enum SamSOp {
     AddConstToX(u8),
     CmpU8AtBWithX,
     CmpU32AtBWithA,
+    SetXToU8AtBDivByX,
+    SetAToU32AtBDivByA,
+    SetXToU8AtBModX,
+    SetAToU32AtBModA,
 }
 
 #[derive(Debug)]
@@ -150,6 +158,18 @@ impl SamSOp {
             }
             SamSOp::CmpU32AtBWithA => {
                 vec![OPCODE_CMP_U32_AT_B_WITH_A]
+            }
+            SamSOp::SetXToU8AtBDivByX => {
+                vec![OPCODE_SET_X_TO_U8_AT_B_DIV_BY_X]
+            }
+            SamSOp::SetAToU32AtBDivByA => {
+                vec![OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A]
+            }
+            SamSOp::SetXToU8AtBModX => {
+                vec![OPCODE_SET_X_TO_U8_AT_B_MOD_X]
+            }
+            SamSOp::SetAToU32AtBModA => {
+                vec![OPCODE_SET_A_TO_U32_AT_B_MOD_A]
             }
         }
     }
@@ -247,6 +267,10 @@ fn decode_sam_op(slice: &[u8]) -> SamOp {
         OPCODE_ADD_CONST_TO_X => SamOp::Simple(SamSOp::AddConstToX(slice[1])),
         OPCODE_CMP_U8_AT_B_WITH_X => SamOp::Simple(SamSOp::CmpU8AtBWithX),
         OPCODE_CMP_U32_AT_B_WITH_A => SamOp::Simple(SamSOp::CmpU32AtBWithA),
+        OPCODE_SET_X_TO_U8_AT_B_DIV_BY_X => SamOp::Simple(SamSOp::SetXToU8AtBDivByX),
+        OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A => SamOp::Simple(SamSOp::SetAToU32AtBDivByA),
+        OPCODE_SET_X_TO_U8_AT_B_MOD_X => SamOp::Simple(SamSOp::SetXToU8AtBModX),
+        OPCODE_SET_A_TO_U32_AT_B_MOD_A => SamOp::Simple(SamSOp::SetAToU32AtBModA),
         _ => panic!("decoding invalid sam op!"),
     }
 }
@@ -481,6 +505,22 @@ impl SamState {
                             std::cmp::Ordering::Equal => 0,
                             std::cmp::Ordering::Less => 255,
                         }
+                    }
+                    SamSOp::SetXToU8AtBDivByX => {
+                        let atb = self.read_u8_at(self.b);
+                        self.x = atb / self.x;
+                    }
+                    SamSOp::SetAToU32AtBDivByA => {
+                        let atb = self.read_u32_at(self.b);
+                        self.a = atb / self.a;
+                    }
+                    SamSOp::SetXToU8AtBModX => {
+                        let atb = self.read_u8_at(self.b);
+                        self.x = atb % self.x;
+                    }
+                    SamSOp::SetAToU32AtBModA => {
+                        let atb = self.read_u32_at(self.b);
+                        self.a = atb % self.a;
                     }
                 }
                 if !jumped {

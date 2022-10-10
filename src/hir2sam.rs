@@ -425,7 +425,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             }
             Expr::BinOp(binop) => {
                 let maybe_typ = self.get_expr_type(expr);
-                let typ = match dest {
+                let result_typ = match dest {
                     Dest::None => {
                         if let Some(typ) = maybe_typ {
                             typ
@@ -458,10 +458,29 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                         }
                     }
                 };
+                let arg_typ = if let BinOpKind::Cmp(_) = binop.kind {
+                    let a_type = self.get_expr_type(&binop.args.0);
+                    let b_type = self.get_expr_type(&binop.args.1);
+                    match a_type {
+                        Some(a_type) => match b_type {
+                            Some(b_type) => {
+                                if a_type == b_type {
+                                    a_type
+                                } else {
+                                    panic!("Comparison on incompatible types");
+                                }
+                            }
+                            None => a_type,
+                        },
+                        None => b_type.unwrap_or(result_typ),
+                    }
+                } else {
+                    result_typ
+                };
                 self.scope(|cpu| {
-                    let lhs_local = cpu.locals.new_temp(typ);
+                    let lhs_local = cpu.locals.new_temp(arg_typ);
                     cpu.eval_expr(&binop.args.0, Dest::Local(lhs_local));
-                    match typ {
+                    match arg_typ {
                         VarType::U8 => {
                             cpu.eval_expr(&binop.args.1, Dest::X);
                             cpu.goto_b_offset(lhs_local.location);
@@ -477,7 +496,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                                     cpu.out.add_op(SamLOp::Simple(SamSOp::MulU8AtBToX));
                                 }
                                 BinOpKind::Div => {
-                                    unimplemented!()
+                                    cpu.out.add_op(SamLOp::Simple(SamSOp::SetXToU8AtBDivByX));
+                                }
+                                BinOpKind::Mod => {
+                                    cpu.out.add_op(SamLOp::Simple(SamSOp::SetXToU8AtBModX));
                                 }
                                 BinOpKind::Cmp(cmp_kind) => {
                                     cpu.out.add_op(SamLOp::Simple(SamSOp::CmpU8AtBWithX));
@@ -500,7 +522,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                                     cpu.out.add_op(SamLOp::Simple(SamSOp::MulU32AtBToA));
                                 }
                                 BinOpKind::Div => {
-                                    unimplemented!()
+                                    cpu.out.add_op(SamLOp::Simple(SamSOp::SetAToU32AtBDivByA));
+                                }
+                                BinOpKind::Mod => {
+                                    cpu.out.add_op(SamLOp::Simple(SamSOp::SetAToU32AtBModA));
                                 }
                                 BinOpKind::Cmp(cmp_kind) => {
                                     cpu.out.add_op(SamLOp::Simple(SamSOp::CmpU32AtBWithA));
@@ -516,7 +541,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                         }
                     }
                 });
-                match typ {
+                match result_typ {
                     VarType::U8 => {
                         match dest {
                             Dest::None => {}

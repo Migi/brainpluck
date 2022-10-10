@@ -2260,6 +2260,28 @@ impl<'c> Cpu<'c> {
     }
 
     /// Adds a/b to div and rem
+    pub fn div_u8s(&mut self, a: Pos, b: Pos, div: Pos, rem: Pos, scratch_track: ScratchTrack) {
+        let ([a_cpy, b_cpy], scratch_track) = scratch_track.split_2();
+        self.copy_byte_autoscratch(a, a_cpy, scratch_track);
+        self.copy_byte_autoscratch(b, b_cpy, scratch_track);
+        self.loop_while(a_cpy, |cpu| {
+            cpu.if_nonzero_else(
+                b_cpy,
+                scratch_track,
+                |cpu, _| {
+                    cpu.dec_at(b_cpy);
+                    cpu.dec_at(a_cpy);
+                },
+                |cpu, scratch_track| {
+                    cpu.copy_byte_autoscratch(b, b_cpy, scratch_track);
+                    cpu.inc_at(div);
+                },
+            );
+        });
+        self.moveadd_byte(b_cpy, rem);
+    }
+
+    /// Adds a/b to div and rem
     pub fn div_binregisters(
         &mut self,
         a: BinRegister,

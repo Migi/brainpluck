@@ -188,6 +188,10 @@ pub fn link_sam_fns(fns: BTreeMap<String, SamFn>) -> CompiledSamProgram {
                     SamSOp::AddConstToX(c) => format!("AddConstToX({})", c),
                     SamSOp::CmpU8AtBWithX => format!("CmpU8AtBWithX"),
                     SamSOp::CmpU32AtBWithA => format!("CmpU32AtBWithA"),
+                    SamSOp::SetXToU8AtBDivByX => format!("SetXToU8AtBDivByX"),
+                    SamSOp::SetAToU32AtBDivByA => format!("SetAToU32AtBDivByA"),
+                    SamSOp::SetXToU8AtBModX => format!("SetXToU8AtBModX"),
+                    SamSOp::SetAToU32AtBModA => format!("SetAToU32AtBModA"),
                 },
                 SamFnOp::Call(called_f_name) => {
                     format!("call \"{}\"", called_f_name)

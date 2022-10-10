@@ -21,6 +21,7 @@ pub enum BinOpKind {
     Minus,
     Mul,
     Div,
+    Mod,
     Cmp(CmpKind),
 }
 
@@ -185,7 +186,7 @@ fn factor<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
 fn term<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     let (i, a) = factor(i)?;
     let (i, _) = ws(i)?;
-    let (i, kind) = opt(alt((tag("*"), tag("/"))))(i)?;
+    let (i, kind) = opt(alt((tag("*"), tag("/"), tag("%"))))(i)?;
     let (i, _) = ws(i)?;
     match kind {
         Some(kind) => {
@@ -193,6 +194,7 @@ fn term<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
             let kind = match kind {
                 "*" => BinOpKind::Mul,
                 "/" => BinOpKind::Div,
+                "%" => BinOpKind::Mod,
                 _ => unreachable!(),
             };
             Ok((

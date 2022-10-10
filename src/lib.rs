@@ -374,6 +374,19 @@ pub fn parse_and_run_bf(bf: &str, input: &str) -> String {
     String::from_utf8_lossy(w.as_bytes()).to_string()
 }
 
+#[wasm_bindgen]
+pub fn parse_and_run_bf_in_webworker(bf: &str, input: &str) -> String {
+    let ops = parse_bf(bf).unwrap_or_else(|e| panic!("Unable to parse bf: {:?}", e));
+    let opt_ops = get_optimized_bf_ops(&ops);
+    let mut bf_state = BfState::new();
+    let mut r = input.as_bytes();
+    let mut w = Vec::new();
+    bf_state
+        .run_ops(&opt_ops, &mut r, &mut w, None)
+        .expect("error running bf program");
+    String::from_utf8_lossy(w.as_bytes()).to_string()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
