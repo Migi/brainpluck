@@ -18,7 +18,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         let mut ptr = ptr;
         let mut cur_ptr = cur_ptr;
 
-        let shift_log2s = [6, 4, 2, 0];
+        let shift_log2s = [8, 7, 6, 5, 4, 3, 2, 1, 0];
 
         for shift_by_log2 in shift_log2s {
             let shift_by = 1 << shift_by_log2;

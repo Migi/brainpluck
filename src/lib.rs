@@ -8,6 +8,7 @@
 )]
 
 mod bf;
+mod bf2wasm;
 mod cpu;
 mod hir;
 mod hir2sam;
@@ -19,7 +20,9 @@ mod sam2lir;
 extern crate console_error_panic_hook;
 extern crate nom;
 extern crate num;
+extern crate wat;
 
+use bf2wasm::bf2wasm;
 use nom::AsBytes;
 use std::fmt::Debug;
 use wasm_bindgen::prelude::*;
@@ -375,16 +378,10 @@ pub fn parse_and_run_bf(bf: &str, input: &str) -> String {
 }
 
 #[wasm_bindgen]
-pub fn parse_and_run_bf_in_webworker(bf: &str, input: &str) -> String {
+pub fn compile_bf_to_wasm(bf: &str) -> Vec<u8> {
     let ops = parse_bf(bf).unwrap_or_else(|e| panic!("Unable to parse bf: {:?}", e));
-    let opt_ops = get_optimized_bf_ops(&ops);
-    let mut bf_state = BfState::new();
-    let mut r = input.as_bytes();
-    let mut w = Vec::new();
-    bf_state
-        .run_ops(&opt_ops, &mut r, &mut w, None)
-        .expect("error running bf program");
-    String::from_utf8_lossy(w.as_bytes()).to_string()
+    let wasm_bytes = bf2wasm(ops, true).unwrap_or_else(|e| panic!("Unable to parse wat: {:?}", e));
+    wasm_bytes
 }
 
 #[cfg(test)]

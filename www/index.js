@@ -1,30 +1,33 @@
 import * as wasm from "wasm-brainfuc";
 
+function getElapsed(start) {
+    const diff = performance.now() - start;
+    if (diff >= 1000) {
+        return (diff * 0.001).toFixed(2).toString() + "s";
+    } else {
+        return diff.toString() + "ms";
+    }
+}
+
 let examples = {};
-examples["Slow Fibonacci"] = 
-`fn main() {
+examples["Naive Fibonacci"] = 
+`fn fib(x: u8) -> u8 {
+    if x <= 1 {
+        1
+    } else {
+        fib(x - 1) + fib(x - 2)
+    }
+}
+
+fn main() {
     let y : u8 = 0;
-    while y <= 5 {
+    while y <= 10 {
         print("fib(");
         print(y);
         print(") = ");
         println(fib(y));
         y = y + 1;
     };
-}
-
-fn fib(x: u8) -> u8 {
-    if x > 0 {
-        if x > 1 {
-            let f1 : u8 = fib(x - 1);
-            let f2 : u8 = fib(x - 2);
-            f1 + f2
-        } else {
-            1
-        }
-    } else {
-        1
-    }
 }`;
 
 examples["Fast Fibonacci"] = 
@@ -45,21 +48,7 @@ examples["Fast Fibonacci"] =
 }`;
 
 examples["Prime test"] = 
-`fn main() {
-    let x : u32 = 10000;
-    while x <= 10020 {
-        print(x);
-        let result : u8 = is_prime(x);
-        if result {
-            println(" is prime");
-        } else {
-            println(" is not prime");
-        };
-        x = x + 1;
-    };
-}
-
-fn is_prime(x: u32) -> u8 {
+`fn is_prime(x: u32) -> u8 {
     if x == 1 {
         return 0;
     };
@@ -74,10 +63,23 @@ fn is_prime(x: u32) -> u8 {
         d = d + 2;
     };
     1
+}
+
+fn main() {
+    let x : u32 = 100000;
+    while x <= 100020 {
+        print(x);
+        if is_prime(x) {
+            println(" is prime");
+        } else {
+            println(" is not prime");
+        };
+        x = x + 1;
+    };
 }`;
 
-let examples_order = ["Slow Fibonacci", "Fast Fibonacci", "Prime test"];
-let default_example = "Slow Fibonacci";
+let examples_order = ["Prime test", "Naive Fibonacci", "Fast Fibonacci"];
+let default_example = "Prime test";
 
 for (let example_name of examples_order) {
     let option = document.createElement("option");
@@ -101,10 +103,13 @@ document.getElementById("example_select").onchange = changeExample;
 document.getElementById("compile_button").onclick = function() {
     let hir = document.getElementById("hir_code").value;
 
-    let compiled = wasm.compile(hir);
-
-    document.getElementById("compiled_sam").value = compiled.sam;
-    document.getElementById("compiled_bf").value = compiled.bf;
+    try {
+        let compiled = wasm.compile(hir);
+        document.getElementById("compiled_sam").value = compiled.sam;
+        document.getElementById("compiled_bf").value = compiled.bf;
+    } catch (err) {
+        alert("Error compiling code. See the console for more info. It likely won't be very helpful info though, because generating nice compiler errors would've been a lot more work.");
+    }
 };
 
 // Debugging:
@@ -135,6 +140,53 @@ document.getElementById("run_button").onclick = function() {
     });
 }
 
+// JIT:
+
+let myWorker = null;
+document.getElementById("jit_run_button").onclick = function() {
+    if (myWorker != null) {
+        myWorker.terminate();
+    }
+    let runBfStart = performance.now();
+    myWorker = new Worker('worker.js');
+    myWorker.onmessage = (e) => {
+        let msg_type = e.data[0];
+        if (msg_type == "output") {
+            document.getElementById("bf_output").value += String.fromCharCode(e.data[1]);
+        } else if (msg_type == "finished") {
+            document.getElementById("bf_status").textContent = "finished in "+getElapsed(runBfStart);
+            document.getElementById("bf_status").className = "status_finished";
+            document.getElementById("stop_bf_button").disabled = true;
+        } else if (msg_type == "async_request_more_input") {
+            document.getElementById("bf_status").textContent = "awaiting input";
+            document.getElementById("bf_status").className = "status_awaiting_input";
+        } else if (msg_type == "error") {
+            document.getElementById("bf_status").textContent = e.data[1];
+            document.getElementById("bf_status").className = "status_crashed";
+        } else {
+            console.error("Unknown message type "+msg_type);
+        }
+    }
+    let bf = document.getElementById("compiled_bf").value;
+
+    try {
+        let result = wasm.compile_bf_to_wasm(bf);
+        myWorker.postMessage(["start", result]);
+    } catch (err) {
+        alert("Error compiling brainfuck code. See the console for more info.");
+    }
+
+    document.getElementById("bf_output").value = "";
+    document.getElementById("bf_status").textContent = "running";
+    document.getElementById("bf_status").className = "status_running";
+    document.getElementById("stop_bf_button").disabled = false;
+    document.getElementById("stop_bf_button").onclick = () => {
+        myWorker.terminate();
+        document.getElementById("bf_status").textContent = "stopped";
+        document.getElementById("bf_status").className = "status_stopped";
+    };
+}
+
 // Copy BF button:
 
 document.getElementById("bf_copy_button").onclick = function() {
@@ -142,5 +194,15 @@ document.getElementById("bf_copy_button").onclick = function() {
     textarea.select();
     document.execCommand("copy");
 }
-
 console.log("Brainpluck version: "+wasm.init_brainpluck());
+
+// Send input button:
+
+function sendInput() {
+    if (myWorker != null) {
+        let input = document.getElementById("bf_input").value;
+        myWorker.postMessage(["add_input", input]);
+        document.getElementById("bf_input").value = "";
+    }
+}
+document.getElementById("send_input_button").onclick = sendInput;
