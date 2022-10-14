@@ -1980,9 +1980,22 @@ impl<'c> Cpu<'c> {
             None::<fn(&mut Cpu, ScratchTrack)>,
         );
     }
+    pub fn match_cmp_result(
+        &mut self,
+        cmp_result: Pos,
+        scratch_track: ScratchTrack,
+        if_a_lt_b: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+        if_eq: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+        if_a_gt_b: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
+    ) {
+        let (cmp_result_cpy, scratch_track) = scratch_track.split_1();
+        self.copy_byte_autoscratch(cmp_result, cmp_result_cpy, scratch_track);
+        self.move_match_cmp_result(cmp_result_cpy, scratch_track, if_a_lt_b, if_eq, if_a_gt_b);
+    }
 
     /// cmp_result: -1 if a < b, 0 if a = b, and 1 if a > b.
-    pub fn match_cmp_result(
+    /// Clears cmp_result
+    pub fn move_match_cmp_result(
         &mut self,
         cmp_result: Pos,
         scratch_track: ScratchTrack,
@@ -1994,38 +2007,26 @@ impl<'c> Cpu<'c> {
             cmp_result,
             scratch_track,
             |cpu, scratch_track| {
-                let (cmp_inced, scratch_track) = scratch_track.split_1();
-                cpu.copy_byte_autoscratch(cmp_result, cmp_inced, scratch_track);
-                cpu.inc_at(cmp_inced);
+                cpu.inc_at(cmp_result);
                 cpu.if_nonzero_else(
-                    cmp_inced,
+                    cmp_result,
                     scratch_track,
                     |cpu, scratch_track| {
-                        if_a_gt_b(cpu, scratch_track);
-                        cpu.sub_const_from_byte(cmp_inced, 2);
+                        cpu.sub_const_from_byte(cmp_result, 2);
+                        cpu.if_nonzero_else(
+                            cmp_result,
+                            scratch_track,
+                            |cpu, _| {
+                                cpu.clr_at(cmp_result);
+                            },
+                            if_a_gt_b,
+                        );
                     },
                     if_a_lt_b,
                 );
             },
             if_eq,
         );
-    }
-
-    /// Version of match_cmp_result that minimizes scratch space usage for callbacks
-    pub fn match_cmp_result_lowscratch(
-        &mut self,
-        cmp_result: Pos,
-        scratch_track: ScratchTrack,
-        if_a_lt_b: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
-        if_eq: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
-        if_a_gt_b: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
-    ) {
-        self.if_zero(cmp_result, scratch_track, if_eq);
-        self.inc_at(cmp_result);
-        self.if_zero(cmp_result, scratch_track, if_a_lt_b);
-        self.sub_const_from_byte(cmp_result, 2);
-        self.if_zero(cmp_result, scratch_track, if_a_gt_b);
-        self.clr_at(cmp_result);
     }
 
     pub fn cmp_binregister(

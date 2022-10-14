@@ -5,7 +5,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BfOp {
     Left,
     Right,
@@ -128,7 +128,7 @@ pub fn parse_bf(s: &str) -> Result<Vec<BfOp>, ParseBfProgError> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ShiftAdd {
     pub shift: i16,
     pub add: u8,
@@ -179,135 +179,197 @@ fn get_loop_as_shiftadds(ops: &Vec<BfOp>) -> Option<HashMap<i16, u8>> {
 }
 
 pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
-    let mut result = Vec::new();
-    struct BufferState {
-        cur_shift: i16,
-        cur_add: u8,
-    }
-    impl BufferState {
-        fn flush_shift(&mut self, result: &mut Vec<BfOp>) {
-            if self.cur_shift == 1 {
-                result.push(BfOp::Right);
-            } else if self.cur_shift == -1 {
-                result.push(BfOp::Left);
-            } else if self.cur_shift != 0 {
-                result.push(BfOp::Shift(self.cur_shift));
-            }
-            self.cur_shift = 0;
+    fn get_optimized_bf_ops_rec(ops: &Vec<BfOp>, first_cell_is_empty: bool) -> Vec<BfOp> {
+        let mut result = Vec::new();
+        let mut cur_cell_is_empty = first_cell_is_empty;
+        let log_useless_ops = false;
+        struct BufferState {
+            cur_shift: i16,
+            cur_add: u8,
         }
+        impl BufferState {
+            fn flush_shift(&mut self, result: &mut Vec<BfOp>) {
+                if self.cur_shift == 1 {
+                    result.push(BfOp::Right);
+                } else if self.cur_shift == -1 {
+                    result.push(BfOp::Left);
+                } else if self.cur_shift != 0 {
+                    result.push(BfOp::Shift(self.cur_shift));
+                }
+                self.cur_shift = 0;
+            }
 
-        fn flush_add(&mut self, result: &mut Vec<BfOp>) {
-            if self.cur_add == 1 {
-                result.push(BfOp::Inc);
-            } else if self.cur_add == 255 {
-                result.push(BfOp::Dec);
-            } else if self.cur_add != 0 {
-                result.push(BfOp::Add(self.cur_add));
+            fn flush_add(&mut self, result: &mut Vec<BfOp>) {
+                if self.cur_add == 1 {
+                    result.push(BfOp::Inc);
+                } else if self.cur_add == 255 {
+                    result.push(BfOp::Dec);
+                } else if self.cur_add != 0 {
+                    result.push(BfOp::Add(self.cur_add));
+                }
+                self.cur_add = 0;
             }
-            self.cur_add = 0;
-        }
 
-        fn flush_all(&mut self, result: &mut Vec<BfOp>) {
-            assert!(!(self.cur_shift != 0 && self.cur_add != 0));
-            self.flush_shift(result);
-            self.flush_add(result);
+            fn flush_all(&mut self, result: &mut Vec<BfOp>) {
+                assert!(!(self.cur_shift != 0 && self.cur_add != 0));
+                self.flush_shift(result);
+                self.flush_add(result);
+            }
         }
-    }
-    let mut buffer = BufferState {
-        cur_shift: 0,
-        cur_add: 0,
-    };
-    for op in ops {
-        match op {
-            BfOp::Left => {
-                buffer.flush_add(&mut result);
-                buffer.cur_shift -= 1;
-            }
-            BfOp::Right => {
-                buffer.flush_add(&mut result);
-                buffer.cur_shift += 1;
-            }
-            BfOp::Inc => {
-                buffer.flush_shift(&mut result);
-                buffer.cur_add = buffer.cur_add.wrapping_add(1);
-            }
-            BfOp::Dec => {
-                buffer.flush_shift(&mut result);
-                buffer.cur_add = buffer.cur_add.wrapping_sub(1);
-            }
-            BfOp::Shift(shift) => {
-                buffer.flush_add(&mut result);
-                buffer.cur_shift += *shift;
-            }
-            BfOp::Add(val) => {
-                buffer.flush_shift(&mut result);
-                buffer.cur_add = buffer.cur_add.wrapping_add(*val);
-            }
-            BfOp::Loop(ops) => {
-                buffer.flush_all(&mut result);
-                let mut created_output = false;
-                if let Some(shift_adds) = get_loop_as_shiftadds(ops) {
-                    if let Some(255) = shift_adds.get(&0) {
-                        if shift_adds.len() == 1 {
-                            result.push(BfOp::Clr);
-                            created_output = true;
-                        } else if shift_adds.len() == 2 {
-                            for (&shift, &add) in &shift_adds {
-                                if shift != 0 {
-                                    if add == 1 {
-                                        assert!(!created_output);
-                                        result.push(BfOp::MoveAdd(shift));
-                                        created_output = true;
+        let mut buffer = BufferState {
+            cur_shift: 0,
+            cur_add: 0,
+        };
+        for op in ops {
+            match op {
+                BfOp::Left => {
+                    buffer.flush_add(&mut result);
+                    buffer.cur_shift -= 1;
+                    cur_cell_is_empty = false;
+                }
+                BfOp::Right => {
+                    buffer.flush_add(&mut result);
+                    buffer.cur_shift += 1;
+                    cur_cell_is_empty = false;
+                }
+                BfOp::Inc => {
+                    buffer.flush_shift(&mut result);
+                    buffer.cur_add = buffer.cur_add.wrapping_add(1);
+                    cur_cell_is_empty = false;
+                }
+                BfOp::Dec => {
+                    buffer.flush_shift(&mut result);
+                    buffer.cur_add = buffer.cur_add.wrapping_sub(1);
+                    cur_cell_is_empty = false;
+                }
+                BfOp::Shift(shift) => {
+                    buffer.flush_add(&mut result);
+                    buffer.cur_shift += *shift;
+                    cur_cell_is_empty = false;
+                }
+                BfOp::Add(val) => {
+                    buffer.flush_shift(&mut result);
+                    buffer.cur_add = buffer.cur_add.wrapping_add(*val);
+                    cur_cell_is_empty = false;
+                }
+                BfOp::Loop(ops) => {
+                    if cur_cell_is_empty {
+                        if log_useless_ops {
+                            crate::console_log!("useless loop: {:?}", ops);
+                        }
+                    } else {
+                        buffer.flush_all(&mut result);
+                        let mut created_output = false;
+                        if let Some(shift_adds) = get_loop_as_shiftadds(ops) {
+                            if let Some(255) = shift_adds.get(&0) {
+                                if shift_adds.len() == 1 {
+                                    result.push(BfOp::Clr);
+                                    created_output = true;
+                                } else if shift_adds.len() == 2 {
+                                    for (&shift, &add) in &shift_adds {
+                                        if shift != 0 {
+                                            if add == 1 {
+                                                assert!(!created_output);
+                                                result.push(BfOp::MoveAdd(shift));
+                                                created_output = true;
+                                            }
+                                        }
                                     }
-                                }
-                            }
-                        } else if shift_adds.len() == 3 {
-                            let mut shift1 = None;
-                            let mut shift2 = None;
-                            for (&shift, &add) in &shift_adds {
-                                if shift != 0 {
-                                    if add == 1 {
-                                        if shift1.is_none() {
-                                            shift1 = Some(shift);
-                                        } else {
-                                            assert!(shift2.is_none());
-                                            shift2 = Some(shift);
+                                } else if shift_adds.len() == 3 {
+                                    let mut shift1 = None;
+                                    let mut shift2 = None;
+                                    for (&shift, &add) in &shift_adds {
+                                        if shift != 0 {
+                                            if add == 1 {
+                                                if shift1.is_none() {
+                                                    shift1 = Some(shift);
+                                                } else {
+                                                    assert!(shift2.is_none());
+                                                    shift2 = Some(shift);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Some(shift1) = shift1 {
+                                        if let Some(shift2) = shift2 {
+                                            result.push(BfOp::MoveAdd2(shift1, shift2));
+                                            created_output = true;
                                         }
                                     }
                                 }
-                            }
-                            if let Some(shift1) = shift1 {
-                                if let Some(shift2) = shift2 {
-                                    result.push(BfOp::MoveAdd2(shift1, shift2));
+                                if !created_output {
+                                    let mut shift_adds_vec = Vec::new();
+                                    for (&shift, &add) in &shift_adds {
+                                        if shift != 0 {
+                                            shift_adds_vec.push(ShiftAdd { shift, add });
+                                        }
+                                    }
+                                    shift_adds_vec.sort_by(|a, b| a.shift.cmp(&b.shift));
+                                    result.push(BfOp::MoveAddMul(shift_adds_vec));
                                     created_output = true;
                                 }
                             }
                         }
                         if !created_output {
-                            let mut shift_adds_vec = Vec::new();
-                            for (&shift, &add) in &shift_adds {
-                                if shift != 0 {
-                                    shift_adds_vec.push(ShiftAdd { shift, add });
-                                }
-                            }
-                            shift_adds_vec.sort_by(|a, b| a.shift.cmp(&b.shift));
-                            result.push(BfOp::MoveAddMul(shift_adds_vec));
-                            created_output = true;
+                            result.push(BfOp::Loop(get_optimized_bf_ops_rec(ops, false)));
                         }
                     }
+                    cur_cell_is_empty = true;
                 }
-                if !created_output {
-                    result.push(BfOp::Loop(get_optimized_bf_ops(ops)));
+                BfOp::Clr => {
+                    if !cur_cell_is_empty {
+                        buffer.flush_all(&mut result);
+                        result.push(BfOp::Clr);
+                    }
+                    cur_cell_is_empty = true;
                 }
-            }
-            other => {
-                buffer.flush_all(&mut result);
-                result.push(other.clone());
+                BfOp::MoveAdd(s) => {
+                    if cur_cell_is_empty {
+                        if log_useless_ops {
+                            crate::console_log!("useless MoveAdd: {:?}", s);
+                        }
+                    }
+                    if !cur_cell_is_empty {
+                        buffer.flush_all(&mut result);
+                        result.push(BfOp::MoveAdd(*s));
+                    }
+                    cur_cell_is_empty = true;
+                }
+                BfOp::MoveAdd2(s1, s2) => {
+                    if cur_cell_is_empty {
+                        if log_useless_ops {
+                            crate::console_log!("useless MoveAdd2: {:?} {:?}", s1, s2);
+                        }
+                    }
+                    if !cur_cell_is_empty {
+                        buffer.flush_all(&mut result);
+                        result.push(BfOp::MoveAdd2(*s1, *s2));
+                    }
+                    cur_cell_is_empty = true;
+                }
+                BfOp::MoveAddMul(v) => {
+                    if cur_cell_is_empty {
+                        if log_useless_ops {
+                            crate::console_log!("useless MoveAddMul: {:?}", v);
+                        }
+                    }
+                    if !cur_cell_is_empty {
+                        buffer.flush_all(&mut result);
+                        result.push(BfOp::MoveAddMul(v.clone()));
+                    }
+                    cur_cell_is_empty = true;
+                }
+                other => {
+                    buffer.flush_all(&mut result);
+                    result.push(other.clone());
+                    cur_cell_is_empty = false;
+                }
             }
         }
+        buffer.flush_all(&mut result);
+        result
     }
-    buffer.flush_all(&mut result);
-    result
+    get_optimized_bf_ops_rec(ops, true)
 }
 
 #[derive(Debug)]
@@ -949,6 +1011,8 @@ pub fn ops2str(ops: &Vec<BfOp>, format_opts: BfFormatOptions) -> String {
                                 cur_shift = shift_add.shift;
                                 write_add(result, shift_add.add);
                             }
+                            write_shift(result, -cur_shift);
+                            *result += "]";
                         }
                     }
                 }

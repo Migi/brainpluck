@@ -37,6 +37,31 @@ use crate::lir2bf::*;
 use crate::sam::*;
 use crate::sam2lir::*;
 
+#[wasm_bindgen]
+extern "C" {
+    // Use `js_namespace` here to bind `console.log(..)` instead of just
+    // `log(..)`
+    #[wasm_bindgen(js_namespace = console)]
+    pub(crate) fn log(s: &str);
+
+    // The `console.log` is quite polymorphic, so we can bind it with multiple
+    // signatures. Note that we need to use `js_name` to ensure we always call
+    // `log` in JS.
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    pub(crate) fn log_u32(a: u32);
+
+    // Multiple arguments too!
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    pub(crate) fn log_many(a: &str, b: &str);
+}
+macro_rules! console_log {
+    // Note that this is using the `log` function imported above during
+    // `bare_bones`
+    ($($t:tt)*) => (crate::log(&format_args!($($t)*).to_string()))
+}
+
+pub(crate) use console_log;
+
 fn print_err<T>(e: impl Debug) -> T {
     panic!("Error: {:?}", e)
 }
@@ -316,6 +341,8 @@ pub fn compile(hir: &str) -> CompilationResult {
 
     let (ops, _cfg) = sam2lir(linked);
     let ops = lir2bf(&ops);
+
+    let ops = get_optimized_bf_ops(&ops);
 
     let bf = ops2str(&ops, BfFormatOptions::clean());
 

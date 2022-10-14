@@ -45,7 +45,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                     );
                 }
 
-                cpu.match_cmp_result_lowscratch(
+                cpu.move_match_cmp_result(
                     cmp_result,
                     scratch_track,
                     |cpu, scratch_track| {
@@ -142,7 +142,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                         cpu.shift_frame_untracked(shift_by, false);
                     },
                 );
-                cpu.clr_at(cmp_result);
             });
             cpu.clr_at(cmp_result);
 
@@ -158,12 +157,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         cpu.unpack_register(ptr, ptr_unpacked, scratch_track, false);
         let (cur_ptr_unpacked, scratch_track) = scratch_track.split_binregister(8);
         cpu.unpack_register(cur_ptr, cur_ptr_unpacked, scratch_track, false);
-        goto_ptr_binregister(
-            cpu,
-            scratch_track,
-            ptr_unpacked,
-            cur_ptr_unpacked,
-        );
+        goto_ptr_binregister(cpu, scratch_track, ptr_unpacked, cur_ptr_unpacked);
         cpu.pack_binregister(cur_ptr_unpacked, cur_ptr, scratch_track, true);
         cpu.clr_binregister(cur_ptr_unpacked, scratch_track);
         cpu.clr_binregister(ptr_unpacked, scratch_track);
@@ -194,7 +188,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                     scratch_track,
                 );
 
-                cpu.match_cmp_result_lowscratch(
+                cpu.move_match_cmp_result(
                     cmp_result,
                     scratch_track,
                     |cpu, scratch_track| {
@@ -281,7 +275,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                         cpu.shift_frame_untracked(shift_by, false);
                     },
                 );
-                cpu.clr_at(cmp_result);
             });
             cpu.clr_at(cmp_result);
 
@@ -1106,7 +1099,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
 
         assert_eq!(cur_instr_num, NUM_OPCODES);
 
-        cpu.check_scratch(scratch_track, "At finish of instruction");
+        //cpu.check_scratch(scratch_track, "At finish of instruction");
 
         //cpu.debug_message("Finished instruction");
         //cpu.breakpoint();
@@ -1122,7 +1115,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         cpu.clr_at(instr_cpy);
         cpu.clr_register(instr_data, scratch_track);
 
-        cpu.check_scratch(scratch_track, "At end of instruction");
+        //cpu.check_scratch(scratch_track, "At end of instruction");
     });
 
     cpu.clr_at(not_halted);
