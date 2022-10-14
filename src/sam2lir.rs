@@ -11,7 +11,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         scratch_track: ScratchTrack,
         ptr: Register,
         cur_ptr: Register,
-        all_registers: Register,
     ) {
         let ([keep_going, cmp_result], scratch_track) = scratch_track.split_2();
 
@@ -27,7 +26,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             cpu.comment(format!("shift_by_{}", shift_by));
             cpu.inc_at(keep_going);
             cpu.loop_while(keep_going, |cpu| {
-                cpu.comment("cmp_2_uint_binregisters");
                 if shift_by_log2 != 0 {
                     assert!(ptr.size == 1);
                     assert!(cur_ptr.size == 1);
@@ -47,12 +45,10 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                     );
                 }
 
-                cpu.comment("match_cmp_result_lowscratch");
                 cpu.match_cmp_result_lowscratch(
                     cmp_result,
                     scratch_track,
                     |cpu, scratch_track| {
-                        cpu.comment("dec_binregister");
                         if shift_by_log2 != 0 {
                             assert!(cur_ptr.size == 1);
                             cpu.sub_const_from_byte(cur_ptr.at(0), 1 << shift_by_log2);
@@ -62,8 +58,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                                 scratch_track,
                             );
                         }
-                        cpu.comment("shift_register_left_oob_by");
-                        cpu.shift_register_left_oob_by(all_registers, scratch_track, shift_by);
                         let scratch_track_size =
                             scratch_track.offset + scratch_track.dont_go_left_of.unwrap_or(0);
                         if shift_by >= 2 {
@@ -72,7 +66,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                                 frame: -1,
                             };
                             cpu.add_const_to_byte(counter, scratch_track_size as u8);
-                            cpu.comment("move loop");
                             cpu.loop_while(counter, |cpu| {
                                 cpu.dec();
                                 cpu.moveadd_byte(
@@ -113,7 +106,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                                 scratch_track,
                             );
                         }
-                        cpu.shift_register_right_oob_by(all_registers, scratch_track, shift_by);
                         let scratch_track_size =
                             scratch_track.offset + scratch_track.dont_go_left_of.unwrap_or(0);
                         if shift_by >= 2 {
@@ -166,7 +158,12 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         cpu.unpack_register(ptr, ptr_unpacked, scratch_track, false);
         let (cur_ptr_unpacked, scratch_track) = scratch_track.split_binregister(8);
         cpu.unpack_register(cur_ptr, cur_ptr_unpacked, scratch_track, false);
-        goto_ptr_binregister(cpu, scratch_track, ptr_unpacked, cur_ptr_unpacked, all_registers);
+        goto_ptr_binregister(
+            cpu,
+            scratch_track,
+            ptr_unpacked,
+            cur_ptr_unpacked,
+        );
         cpu.pack_binregister(cur_ptr_unpacked, cur_ptr, scratch_track, true);
         cpu.clr_binregister(cur_ptr_unpacked, scratch_track);
         cpu.clr_binregister(ptr_unpacked, scratch_track);
@@ -177,7 +174,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         scratch_track: ScratchTrack,
         ptr: BinRegister,
         cur_ptr: BinRegister,
-        all_registers: Register,
     ) {
         let ([keep_going, cmp_result], scratch_track) = scratch_track.split_2();
 
@@ -191,7 +187,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             cpu.comment(format!("shift_by_{}", shift_by));
             cpu.inc_at(keep_going);
             cpu.loop_while(keep_going, |cpu| {
-                cpu.comment("cmp_2_uint_binregisters");
                 cpu.cmp_2_uint_binregisters(
                     ptr.subview(0, ptr.size - shift_by_log2),
                     cur_ptr.subview(0, cur_ptr.size - shift_by_log2),
@@ -199,18 +194,14 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                     scratch_track,
                 );
 
-                cpu.comment("match_cmp_result_lowscratch");
                 cpu.match_cmp_result_lowscratch(
                     cmp_result,
                     scratch_track,
                     |cpu, scratch_track| {
-                        cpu.comment("dec_binregister");
                         cpu.dec_binregister(
                             cur_ptr.subview(0, cur_ptr.size - shift_by_log2),
                             scratch_track,
                         );
-                        cpu.comment("shift_register_left_oob_by");
-                        cpu.shift_register_left_oob_by(all_registers, scratch_track, shift_by);
                         let scratch_track_size =
                             scratch_track.offset + scratch_track.dont_go_left_of.unwrap_or(0);
                         if shift_by >= 2 {
@@ -219,7 +210,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                                 frame: -1,
                             };
                             cpu.add_const_to_byte(counter, scratch_track_size as u8);
-                            cpu.comment("move loop");
                             cpu.loop_while(counter, |cpu| {
                                 cpu.dec();
                                 cpu.moveadd_byte(
@@ -255,7 +245,6 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                             cur_ptr.subview(0, cur_ptr.size - shift_by_log2),
                             scratch_track,
                         );
-                        cpu.shift_register_right_oob_by(all_registers, scratch_track, shift_by);
                         let scratch_track_size =
                             scratch_track.offset + scratch_track.dont_go_left_of.unwrap_or(0);
                         if shift_by >= 2 {
@@ -314,27 +303,33 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
     push_u32_to_vec(&mut cells, hlt);
 
     let mut cfg = CpuConfig::new();
-    let mut register_builder = cfg.build_register_track(TrackId::Register1);
+    /*let mut register_builder = cfg.build_register_track(TrackId::Register1);
     let a = register_builder.add_register(4);
     let b = register_builder.add_register(4);
     let c = register_builder.add_register(4);
     let x = register_builder.add_register(1);
     let iptr = register_builder.add_register(4);
-    let cur_ptr = register_builder.add_register(4);
+    let cur_ptr = register_builder.add_register(4);*/
     let scratch_track = cfg.add_scratch_track(TrackId::Scratch1);
+    let (a, scratch_track) = scratch_track.split_register(4);
+    let (b, scratch_track) = scratch_track.split_register(4);
+    let (c, scratch_track) = scratch_track.split_register(4);
+    let (x, scratch_track) = scratch_track.split_register(1);
+    let (iptr, scratch_track) = scratch_track.split_register(4);
+    let (cur_ptr, scratch_track) = scratch_track.split_register(4);
     let data_track = cfg.add_data_track(TrackId::Stack);
 
-    match cfg.tracks.get_mut(&TrackId::Register1).unwrap() {
+    /*match cfg.tracks.get_mut(&TrackId::Scratch1).unwrap() {
         TrackKind::MultipleRegisters(_, ref mut register_map, ref mut _binregister_map) => {
             register_map.insert("a".to_owned(), a);
-            register_map.insert("x".to_owned(), x);
-            register_map.insert("c".to_owned(), c);
             register_map.insert("b".to_owned(), b);
+            register_map.insert("c".to_owned(), c);
+            register_map.insert("x".to_owned(), x);
             register_map.insert("iptr".to_owned(), iptr);
             register_map.insert("cur_ptr".to_owned(), cur_ptr);
         }
         _ => unreachable!(),
-    }
+    }*/
 
     let print_debug_messages = false;
     let print_comments = true;
@@ -382,7 +377,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
     cpu.comment("Main loop");
 
     cpu.loop_while(not_halted, |cpu| {
-        goto_ptr_register(cpu, scratch_track, iptr, cur_ptr, all_registers);
+        goto_ptr_register(cpu, scratch_track, iptr, cur_ptr);
         let (should_goto_b, scratch_track) = scratch_track.split_1();
         {
             let (deccing_instr_cpy, scratch_track) = scratch_track.split_1();
@@ -397,14 +392,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                 cur_instr: u8,
             ) {
                 if set.contains(&cur_instr) {
-                    cpu.if_nonzero_else(
-                        deccing_instr_cpy,
-                        scratch_track,
-                        |_, _| {},
-                        |cpu, _| {
-                            cpu.inc_at(should_goto_b);
-                        },
-                    );
+                    cpu.if_zero(deccing_instr_cpy, scratch_track, |cpu, _| {
+                        cpu.inc_at(should_goto_b);
+                    });
                 }
                 let max_should_goto_b_instr = *set.iter().max().unwrap();
                 if cur_instr < max_should_goto_b_instr {
@@ -446,7 +436,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         cpu.comment("Go to b (if needed)");
         cpu.if_nonzero(should_goto_b, scratch_track, |cpu, scratch_track| {
             cpu.dec_at(should_goto_b);
-            goto_ptr_register(cpu, scratch_track, b, cur_ptr, all_registers);
+            goto_ptr_register(cpu, scratch_track, b, cur_ptr);
         });
 
         let atb_1 = data_track.view_register_at(0, 1);

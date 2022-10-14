@@ -830,27 +830,18 @@ impl<'c> Cpu<'c> {
         if_nonzero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
         if_zero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
     ) {
-        let ([zero, byte_cpy, one], new_scratch) = scratch_track.split_3();
-        self.copy_byte(cond, byte_cpy, zero);
-        self.inc_at(one);
-        self.goto(byte_cpy);
-        self.raw_loop(move |cpu| {
-            cpu.clr();
-            if_nonzero(cpu, new_scratch);
-            cpu.goto(zero);
+        let ([cond_cpy, found_zero], _) = scratch_track.split_2();
+        self.moveadd_byte(cond, cond_cpy);
+        self.loop_while(cond_cpy, |cpu| {
+            cpu.moveadd_byte(cond_cpy, cond);
+            if_nonzero(cpu, scratch_track);
+            cpu.dec_at(found_zero);
         });
-        // we could be at byte_cpy (if 0) or at zero
-        assert_eq!(self.cur_frame, None);
-        assert_eq!(self.cur_track, scratch_track.track.track_num);
-        self.shift_frame_untracked(1, true);
-        // now we're at byte_cpy (which is now 0) or one
-        self.raw_loop(move |cpu| {
-            cpu.cur_frame = Some(one.frame);
-            if_zero(cpu, new_scratch);
-            cpu.goto(byte_cpy);
-        });
-        self.cur_frame = Some(byte_cpy.frame);
-        self.dec_at(one);
+        self.inc_at(found_zero);
+        self.loop_while(found_zero, |cpu| {
+            cpu.dec();
+            if_zero(cpu, scratch_track);
+        })
     }
 
     pub fn if_nonzero(
@@ -859,7 +850,12 @@ impl<'c> Cpu<'c> {
         scratch_track: ScratchTrack,
         if_nonzero: impl for<'a> FnOnce(&'a mut Cpu, ScratchTrack),
     ) {
-        self.if_nonzero_else(cond, scratch_track, if_nonzero, |_, _| {});
+        let (cond_cpy, _) = scratch_track.split_1();
+        self.loop_while(cond, |cpu| {
+            if_nonzero(cpu, scratch_track);
+            cpu.moveadd_byte(cond, cond_cpy);
+        });
+        self.moveadd_byte(cond_cpy, cond);
     }
 
     pub fn if_zero(
@@ -2141,27 +2137,22 @@ impl<'c> Cpu<'c> {
                 None::<fn(&mut Cpu, ScratchTrack)>,
                 |cpu, pos, scratch_track| {
                     let (sliding_result, scratch_track) = scratch_track.split_1();
-                    cpu.if_nonzero_else(
-                        sliding_result,
-                        scratch_track,
-                        |_, _| {},
-                        |cpu, scratch_track| {
-                            cpu.if_nonzero_else(
-                                pos,
-                                scratch_track,
-                                |cpu, scratch_track| {
-                                    cpu.if_zero(b.at(0), scratch_track, |cpu, _| {
-                                        cpu.inc_at(sliding_result);
-                                    });
-                                },
-                                |cpu, scratch_track| {
-                                    cpu.if_nonzero(b.at(0), scratch_track, |cpu, _| {
-                                        cpu.dec_at(sliding_result);
-                                    });
-                                },
-                            );
-                        },
-                    );
+                    cpu.if_zero(sliding_result, scratch_track, |cpu, scratch_track| {
+                        cpu.if_nonzero_else(
+                            pos,
+                            scratch_track,
+                            |cpu, scratch_track| {
+                                cpu.if_zero(b.at(0), scratch_track, |cpu, _| {
+                                    cpu.inc_at(sliding_result);
+                                });
+                            },
+                            |cpu, scratch_track| {
+                                cpu.if_nonzero(b.at(0), scratch_track, |cpu, _| {
+                                    cpu.dec_at(sliding_result);
+                                });
+                            },
+                        );
+                    });
                     cpu.moveadd_byte(sliding_result, sliding_result.get_shifted(1));
                 },
                 Some(|cpu: &mut Cpu, scratch_track: ScratchTrack| {

@@ -290,9 +290,7 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
                                     shift_adds_vec.push(ShiftAdd { shift, add });
                                 }
                             }
-                            shift_adds_vec.sort_by(|a, b| {
-                                a.shift.cmp(&b.shift)
-                            });
+                            shift_adds_vec.sort_by(|a, b| a.shift.cmp(&b.shift));
                             result.push(BfOp::MoveAddMul(shift_adds_vec));
                             created_output = true;
                         }
@@ -934,10 +932,15 @@ pub fn ops2str(ops: &Vec<BfOp>, format_opts: BfFormatOptions) -> String {
                 BfOp::MoveAddMul(vec) => {
                     if !format_opts.only_loops_and_comments {
                         if format_opts.should_print_optimizations() {
-                            *result += &format!("MoveAddMul({})", vec.iter().map(|x| format!("({}, {})", x.shift, x.add)).fold(String::new(), |a, b| {
-                                let comma = if &a == "" { "" } else { ", " };
-                                a + comma + &b
-                            }));
+                            *result += &format!(
+                                "MoveAddMul({})",
+                                vec.iter()
+                                    .map(|x| format!("({}, {})", x.shift, x.add))
+                                    .fold(String::new(), |a, b| {
+                                        let comma = if &a == "" { "" } else { ", " };
+                                        a + comma + &b
+                                    })
+                            );
                         } else {
                             *result += "[-";
                             let mut cur_shift = 0;
