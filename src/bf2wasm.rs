@@ -203,6 +203,26 @@ pub fn bf2wasm(bf_ops: Vec<BfOp>, optimize_first: bool) -> wat::Result<Vec<u8>> 
                     );
                     *bf_wat += "(i32.store8 (local.get $tmp2) (i32.add (i32.load8_u (local.get $tmp2)) (local.get $tmp1)))\n";
                 }
+                BfOp::MoveAddMul(shift_adds) => {
+                    // read cell:
+                    *bf_wat += "(local.set $tmp1 (i32.load8_u (local.get $cell_ptr)))\n";
+                    // set cell to 0:
+                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.const 0))\n";
+                    for shift_add in shift_adds {
+                        *bf_wat += &format!(
+                            "(local.set $tmp2 (i32.add (local.get $cell_ptr) (i32.const {})))\n",
+                            shift_add.shift
+                        );
+                        let mul_expr = if shift_add.add == 1 {
+                            format!("(i32.add (i32.load8_u (local.get $tmp2)) (local.get $tmp1))")
+                        } else if shift_add.add == 255 {
+                            format!("(i32.sub (i32.load8_u (local.get $tmp2)) (local.get $tmp1))")
+                        } else {
+                            format!("(i32.add (i32.load8_u (local.get $tmp2)) (i32.mul (local.get $tmp1) (i32.const {})))", shift_add.add)
+                        };
+                        *bf_wat += &format!("(i32.store8 (local.get $tmp2) {})\n", mul_expr);
+                    }
+                }
                 BfOp::Comment(_) => {}
                 BfOp::DebugMessage(_) => {}
                 BfOp::Crash(_) => {}

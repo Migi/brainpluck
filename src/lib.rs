@@ -418,7 +418,7 @@ pub fn perf_bf(bf: &str, input: &str) -> String {
     bf_state
         .run_ops(&opt_ops, &mut r, &mut w, None, Some(&mut loop_count))
         .expect("error running bf program");
-    ops2str(&opt_ops, BfFormatOptions::perf_clean(&loop_count))
+    ops2str(&opt_ops, BfFormatOptions::perf_verbose(&loop_count))
 }
 
 #[cfg(test)]

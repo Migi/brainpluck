@@ -19,6 +19,7 @@ pub enum BfOp {
     Add(u8),
     MoveAdd(i16),
     MoveAdd2(i16, i16),
+    MoveAddMul(Vec<ShiftAdd>),
     Comment(String),
     DebugMessage(String),
     Crash(String),
@@ -127,9 +128,10 @@ pub fn parse_bf(s: &str) -> Result<Vec<BfOp>, ParseBfProgError> {
     }
 }
 
-struct ShiftAdd {
-    shift: i16,
-    add: u8,
+#[derive(Clone)]
+pub struct ShiftAdd {
+    pub shift: i16,
+    pub add: u8,
 }
 
 fn get_loop_as_shiftadds(ops: &Vec<BfOp>) -> Option<HashMap<i16, u8>> {
@@ -250,7 +252,7 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
                             result.push(BfOp::Clr);
                             created_output = true;
                         } else if shift_adds.len() == 2 {
-                            for (shift, add) in shift_adds {
+                            for (&shift, &add) in &shift_adds {
                                 if shift != 0 {
                                     if add == 1 {
                                         assert!(!created_output);
@@ -262,7 +264,7 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
                         } else if shift_adds.len() == 3 {
                             let mut shift1 = None;
                             let mut shift2 = None;
-                            for (shift, add) in shift_adds {
+                            for (&shift, &add) in &shift_adds {
                                 if shift != 0 {
                                     if add == 1 {
                                         if shift1.is_none() {
@@ -280,6 +282,19 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
                                     created_output = true;
                                 }
                             }
+                        }
+                        if !created_output {
+                            let mut shift_adds_vec = Vec::new();
+                            for (&shift, &add) in &shift_adds {
+                                if shift != 0 {
+                                    shift_adds_vec.push(ShiftAdd { shift, add });
+                                }
+                            }
+                            shift_adds_vec.sort_by(|a, b| {
+                                a.shift.cmp(&b.shift)
+                            });
+                            result.push(BfOp::MoveAddMul(shift_adds_vec));
+                            created_output = true;
                         }
                     }
                 }
@@ -432,6 +447,15 @@ impl BfState {
                 let other_ptr = self.get_valid_ptr(*shift2)?;
                 self.cells[other_ptr] =
                     self.cells[other_ptr].wrapping_add(self.cells[self.cell_ptr]);
+                self.cells[self.cell_ptr] = 0;
+            }
+            BfOp::MoveAddMul(vec) => {
+                let base_val = self.cells[self.cell_ptr];
+                for shift_add in vec {
+                    let other_ptr = self.get_valid_ptr(shift_add.shift)?;
+                    self.cells[other_ptr] =
+                        self.cells[other_ptr].wrapping_add(base_val.wrapping_mul(shift_add.add));
+                }
                 self.cells[self.cell_ptr] = 0;
             }
             BfOp::Comment(_) => {}
@@ -743,6 +767,18 @@ impl<'a> BfFormatOptions<'a> {
 }
 
 pub fn ops2str(ops: &Vec<BfOp>, format_opts: BfFormatOptions) -> String {
+    fn write_add(result: &mut String, val: u8) {
+        if val <= 128 {
+            for _ in 0..val {
+                *result += "+";
+            }
+        } else {
+            for _ in val..=255 {
+                *result += "-";
+            }
+        }
+    }
+
     fn write_shift(result: &mut String, shift: i16) {
         if shift < 0 {
             for _ in 0..-shift {
@@ -863,15 +899,7 @@ pub fn ops2str(ops: &Vec<BfOp>, format_opts: BfFormatOptions) -> String {
                         if format_opts.should_print_optimizations() {
                             *result += &format!("Add({})", val);
                         } else {
-                            if *val <= 128 {
-                                for _ in 0..*val {
-                                    *result += "+";
-                                }
-                            } else {
-                                for _ in *val..=255 {
-                                    *result += "-";
-                                }
-                            }
+                            write_add(result, *val);
                         }
                     }
                 }
@@ -900,6 +928,24 @@ pub fn ops2str(ops: &Vec<BfOp>, format_opts: BfFormatOptions) -> String {
                             *result += "+";
                             write_shift(result, -*shift2);
                             *result += "]";
+                        }
+                    }
+                }
+                BfOp::MoveAddMul(vec) => {
+                    if !format_opts.only_loops_and_comments {
+                        if format_opts.should_print_optimizations() {
+                            *result += &format!("MoveAddMul({})", vec.iter().map(|x| format!("({}, {})", x.shift, x.add)).fold(String::new(), |a, b| {
+                                let comma = if &a == "" { "" } else { ", " };
+                                a + comma + &b
+                            }));
+                        } else {
+                            *result += "[-";
+                            let mut cur_shift = 0;
+                            for shift_add in vec {
+                                write_shift(result, shift_add.shift - cur_shift);
+                                cur_shift = shift_add.shift;
+                                write_add(result, shift_add.add);
+                            }
                         }
                     }
                 }
