@@ -27,17 +27,13 @@ class Queue {
 
 let inputQueue = new Queue();
 let wasmState = {
-    "module": null,
-    "cell_ptr": 0,
-    "async_start_block": 0
+    "module": null
 };
 
 onmessage = function(e) {
     let messageType = e.data[0];
 
     if (messageType == "start") {
-        const memory = new WebAssembly.Memory({ initial: 100 });
-
         const importObject = {
             imports: {
                 read_input_byte() {
@@ -47,17 +43,11 @@ onmessage = function(e) {
                         return inputQueue.dequeue();
                     }
                 },
-                async_request_more_input(cell_ptr, async_start_block) {
-                    wasmState["cell_ptr"] = cell_ptr;
-                    wasmState["async_start_block"] = async_start_block;
-                    console.log(wasmState);
-                    postMessage(["async_request_more_input"]);
-                },
                 write_output_byte(byte) {
                     postMessage(["output", byte]);
                 },
+                tape: new WebAssembly.Memory({ initial: 100 })
             },
-            js: { mem: memory },
         };
 
         let wasmModulePromise = WebAssembly.instantiate(e.data[1], importObject);
@@ -65,10 +55,12 @@ onmessage = function(e) {
         wasmModulePromise.then((module) => {
             wasmState.module = module;
             try {
-                let return_val = module.instance.exports.run_bf(0, 0);
+                let return_val = module.instance.exports.run_bf();
                 if (return_val == 0) {
                     postMessage(["finished"]);
                     wasmState.module = null;
+                } else if (return_val == 1) {
+                    postMessage(["need_more_input"]);
                 }
             } catch (err) {
                 postMessage(["error", err]);
@@ -86,10 +78,12 @@ onmessage = function(e) {
         inputQueue.enqueue("\n".charCodeAt(0));
         if (wasmState.module != null) {
             try {
-                let return_val = wasmState.module.instance.exports.run_bf(wasmState["cell_ptr"], wasmState["async_start_block"]);
+                let return_val = wasmState.module.instance.exports.run_bf();
                 if (return_val == 0) {
                     postMessage(["finished"]);
                     wasmState.module = null;
+                } else if (return_val == 1) {
+                    postMessage(["need_more_input"]);
                 }
             } catch (err) {
                 postMessage(["error", err]);

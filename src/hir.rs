@@ -56,14 +56,18 @@ pub enum Expr {
     FnCall(FnCall),
     Scope(Scope),
     IfElse(Box<IfElse>),
+    Deref(Box<Expr>),
+    AddressOf(String),
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum VarType {
     Unit,
     U8,
+    Bool,
     U32,
     StringLiteral,
+    PtrTo(Box<VarType>),
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +79,7 @@ pub struct VarDecl {
 
 #[derive(Debug, Clone)]
 pub struct VarAssign {
-    pub var_name: String,
+    pub lhs: Expr,
     pub expr: Expr,
 }
 
@@ -101,7 +105,7 @@ pub struct IfElse {
 
 #[derive(Debug, Clone)]
 pub struct ReturnStmt {
-    pub expr: Expr,
+    pub expr: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,11 +179,22 @@ fn biguint<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, BigUint, 
 
 fn factor<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     alt((
+        map(bracketed_expr, |e| e),
         map(biguint, |u| Expr::Literal(u)),
         map(str_literal, |s| Expr::StringLiteral(s.to_owned())),
         map(if_else, |i| Expr::IfElse(Box::new(i))),
         map(fncall, |c| Expr::FnCall(c)),
-        map(ident, |s| Expr::VarRef(s.to_owned())),
+        map(address_of, |s| Expr::AddressOf(s.to_owned())),
+        map(deref, |e| e),
+        map(ident, |s| {
+            if s == "true" {
+                Expr::Literal(BigUint::from(1u64))
+            } else if s == "false" {
+                Expr::Literal(BigUint::from(0u64))
+            } else {
+                Expr::VarRef(s.to_owned())
+            }
+        }),
     ))(i)
 }
 
@@ -245,7 +260,16 @@ fn cmp_term<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E>
     }
 }
 
-fn expr<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
+fn bracketed_expr<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("(")(i)?;
+    let (i, e) = expr(i)?;
+    let (i, _) = ws(i)?;
+    let (i, _) = tag(")")(i)?;
+    Ok((i, e))
+}
+
+fn unbracketed_expr<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     let (i, a) = cmp_term(i)?;
     let (i, _) = ws(i)?;
     let (i, kind) = opt(alt((tag("+"), tag("-"))))(i)?;
@@ -270,6 +294,10 @@ fn expr<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
     }
 }
 
+fn expr<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
+    alt((map(unbracketed_expr, |e| e), map(bracketed_expr, |e| e)))(i)
+}
+
 fn ident<'a, E: nom::error::ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
     let (i, _) = ws(i)?;
     // check first char
@@ -283,6 +311,23 @@ fn ident<'a, E: nom::error::ParseError<&'a str>>(i: &'a str) -> IResult<&'a str,
         }
     }
     take_while(|c: char| c.is_alphanumeric() || c == '_')(i)
+}
+
+fn address_of<'a, E: nom::error::ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("&")(i)?;
+    ident(i)
+}
+
+fn deref<'a, E: nom::error::ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Expr, E> {
+    let (i, _) = ws(i)?;
+    let (i, _) = tag("*")(i)?;
+    alt((
+        map(bracketed_expr, |e| Expr::Deref(Box::new(e))),
+        map(fncall, |c| Expr::Deref(Box::new(Expr::FnCall(c)))),
+        map(deref, |e| Expr::Deref(Box::new(e))),
+        map(ident, |s| Expr::Deref(Box::new(Expr::VarRef(s.to_owned())))),
+    ))(i)
 }
 
 fn fncall<'a, E: nom::error::ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnCall, E> {
@@ -301,9 +346,21 @@ fn fncall<'a, E: nom::error::ParseError<&'a str>>(i: &'a str) -> IResult<&'a str
 }
 
 fn type_name<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarType, E> {
+    let (i, _) = ws(i)?;
+    // check for ref first
+    {
+        let (i, first_char) = anychar(i)?;
+        if first_char == '&' {
+            let (i, inner_typ) = type_name(i)?;
+            return Ok((i, VarType::PtrTo(Box::new(inner_typ))));
+        }
+    }
+    // no pointer (would've returned already otherwise):
     let (i, typ) = ident(i)?;
     let typ = {
-        if typ == "u8" {
+        if typ == "bool" {
+            VarType::Bool
+        } else if typ == "u8" {
             VarType::U8
         } else if typ == "u32" {
             VarType::U32
@@ -317,17 +374,48 @@ fn type_name<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarType
 fn scope<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Scope, E> {
     let (i, _) = ws(i)?;
     let (i, _) = tag("{")(i)?;
-    let (i, stmts) = many0(stmt)(i)?;
+    let (i, mut stmts) = many0(stmt)(i)?;
     let (i, final_expr) = opt(expr)(i)?;
     let (i, _) = ws(i)?;
     let (i, _) = tag("}")(i)?;
-    Ok((
-        i,
-        Scope {
-            stmts,
-            final_expr: final_expr.map(|e| Box::new(e)),
-        },
-    ))
+    if final_expr.is_some() {
+        Ok((
+            i,
+            Scope {
+                stmts,
+                final_expr: final_expr.map(|e| Box::new(e)),
+            },
+        ))
+    } else {
+        let mut final_expr = None;
+        if let Some(Stmt::IfMaybeElse(if_mb_e)) = stmts.last() {
+            if let Some(if_false) = &if_mb_e.if_false {
+                final_expr = Some(Expr::IfElse(Box::new(IfElse {
+                    cond: if_mb_e.cond.clone(),
+                    if_true: if_mb_e.if_true.clone(),
+                    if_false: if_false.clone(),
+                })));
+            }
+        }
+        if let Some(final_expr) = final_expr {
+            stmts.pop().unwrap();
+            Ok((
+                i,
+                Scope {
+                    stmts,
+                    final_expr: Some(Box::new(final_expr)),
+                },
+            ))
+        } else {
+            Ok((
+                i,
+                Scope {
+                    stmts,
+                    final_expr: final_expr.map(|e| Box::new(e)),
+                },
+            ))
+        }
+    }
 }
 
 fn if_maybe_else<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, IfMaybeElse, E> {
@@ -400,39 +488,42 @@ fn var_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarDecl,
 }
 
 fn var_assign<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, VarAssign, E> {
-    let (i, var_name) = ident(i)?;
+    let (i, lhs) = expr(i)?;
     let (i, _) = ws(i)?;
     let (i, _) = tag("=")(i)?;
     let (i, expr) = expr(i)?;
 
-    Ok((
-        i,
-        VarAssign {
-            var_name: var_name.to_owned(),
-            expr,
-        },
-    ))
+    Ok((i, VarAssign { lhs, expr }))
 }
 
 fn return_stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, ReturnStmt, E> {
     let (i, _) = ws(i)?;
     let (i, _) = tag("return")(i)?;
-    let (i, expr) = expr(i)?;
-    Ok((i, ReturnStmt { expr }))
+    if let Ok((i, expr)) = expr::<E>(i) {
+        Ok((i, ReturnStmt { expr: Some(expr) }))
+    } else {
+        Ok((i, ReturnStmt { expr: None }))
+    }
 }
 
 fn stmt<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, Stmt, E> {
-    let (i, stmt) = alt((
+    if let Ok((i, stmt)) = alt::<_, _, E, _>((
         map(while_loop, |w| Stmt::WhileLoop(w)),
         map(if_maybe_else, |i| Stmt::IfMaybeElse(i)),
-        map(var_decl, |d| Stmt::VarDecl(d)),
-        map(var_assign, |a| Stmt::VarAssign(a)),
-        map(return_stmt, |s| Stmt::Return(s)),
-        map(expr, |e| Stmt::Expr(e)),
-    ))(i)?;
-    let (i, _) = ws(i)?;
-    let (i, _) = tag(";")(i)?;
-    Ok((i, stmt))
+    ))(i)
+    {
+        Ok((i, stmt))
+    } else {
+        let (i, stmt) = alt((
+            map(var_decl, |d| Stmt::VarDecl(d)),
+            map(var_assign, |a| Stmt::VarAssign(a)),
+            map(return_stmt, |s| Stmt::Return(s)),
+            map(expr, |e| Stmt::Expr(e)),
+        ))(i)?;
+        let (i, _) = ws(i)?;
+        let (i, _) = tag(";")(i)?;
+        Ok((i, stmt))
+    }
 }
 
 fn fn_arg_decl<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, FnArgDecl, E> {

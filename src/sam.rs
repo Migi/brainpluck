@@ -35,8 +35,11 @@ pub const OPCODE_SET_X_TO_U8_AT_B_DIV_BY_X: u8 = 27;
 pub const OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A: u8 = 28;
 pub const OPCODE_SET_X_TO_U8_AT_B_MOD_X: u8 = 29;
 pub const OPCODE_SET_A_TO_U32_AT_B_MOD_A: u8 = 30;
+pub const OPCODE_COPY_A_TO_B: u8 = 31;
+pub const OPCODE_COPY_B_TO_A: u8 = 32;
+pub const OPCODE_SWAP_B_AND_C: u8 = 33;
 
-pub const NUM_OPCODES: u8 = 31;
+pub const NUM_OPCODES: u8 = 34;
 
 #[derive(Debug, Copy, Clone)]
 pub enum SamSOp {
@@ -68,6 +71,9 @@ pub enum SamSOp {
     SetAToU32AtBDivByA,
     SetXToU8AtBModX,
     SetAToU32AtBModA,
+    CopyAToB,
+    CopyBToA,
+    SwapBAndC,
 }
 
 #[derive(Debug)]
@@ -171,6 +177,15 @@ impl SamSOp {
             SamSOp::SetAToU32AtBModA => {
                 vec![OPCODE_SET_A_TO_U32_AT_B_MOD_A]
             }
+            SamSOp::CopyAToB => {
+                vec![OPCODE_COPY_A_TO_B]
+            }
+            SamSOp::CopyBToA => {
+                vec![OPCODE_COPY_B_TO_A]
+            }
+            SamSOp::SwapBAndC => {
+                vec![OPCODE_SWAP_B_AND_C]
+            }
         }
     }
 
@@ -271,6 +286,9 @@ fn decode_sam_op(slice: &[u8]) -> SamOp {
         OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A => SamOp::Simple(SamSOp::SetAToU32AtBDivByA),
         OPCODE_SET_X_TO_U8_AT_B_MOD_X => SamOp::Simple(SamSOp::SetXToU8AtBModX),
         OPCODE_SET_A_TO_U32_AT_B_MOD_A => SamOp::Simple(SamSOp::SetAToU32AtBModA),
+        OPCODE_COPY_A_TO_B => SamOp::Simple(SamSOp::CopyAToB),
+        OPCODE_COPY_B_TO_A => SamOp::Simple(SamSOp::CopyBToA),
+        OPCODE_SWAP_B_AND_C => SamOp::Simple(SamSOp::SwapBAndC),
         _ => panic!("decoding invalid sam op!"),
     }
 }
@@ -282,6 +300,7 @@ pub struct SamState {
     pub halted: bool,
     pub a: SamVal,
     pub b: SamVal,
+    pub c: SamVal,
     pub x: u8,
 }
 
@@ -309,6 +328,7 @@ impl SamState {
             halted: false,
             a: 0,
             b,
+            c: 0,
             x: 0,
         }
     }
@@ -521,6 +541,15 @@ impl SamState {
                     SamSOp::SetAToU32AtBModA => {
                         let atb = self.read_u32_at(self.b);
                         self.a = atb % self.a;
+                    }
+                    SamSOp::CopyAToB => {
+                        self.b = self.a;
+                    }
+                    SamSOp::CopyBToA => {
+                        self.a = self.b;
+                    }
+                    SamSOp::SwapBAndC => {
+                        std::mem::swap(&mut self.b, &mut self.c);
                     }
                 }
                 if !jumped {

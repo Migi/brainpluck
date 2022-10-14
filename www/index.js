@@ -10,6 +10,37 @@ function getElapsed(start) {
 }
 
 let examples = {};
+examples["Prime test"] = 
+`fn is_prime(x: u32) -> bool {
+    if x == 1 {
+        return false;
+    }
+    if x % 2 == 0 {
+        return x == 2;
+    }
+    let d : u32 = 3;
+    while d * d <= x {
+        if x % d == 0 {
+            return false;
+        }
+        d = d + 2;
+    }
+    true
+}
+
+fn main() {
+    let x : u32 = 100000;
+    while x <= 100020 {
+        print(x);
+        if is_prime(x) {
+            println(" is prime");
+        } else {
+            println(" is not prime");
+        }
+        x = x + 1;
+    }
+}`;
+
 examples["Naive Fibonacci"] = 
 `fn fib(x: u8) -> u8 {
     if x <= 1 {
@@ -21,13 +52,13 @@ examples["Naive Fibonacci"] =
 
 fn main() {
     let y : u8 = 0;
-    while y <= 10 {
+    while y <= 12 {
         print("fib(");
         print(y);
         print(") = ");
         println(fib(y));
         y = y + 1;
-    };
+    }
 }`;
 
 examples["Fast Fibonacci"] = 
@@ -44,41 +75,56 @@ examples["Fast Fibonacci"] =
         fib_x = fib_x + fib_x_minus_1;
         fib_x_minus_1 = prev_fib_x;
         x = x + 1;
-    };
+    }
 }`;
 
-examples["Prime test"] = 
-`fn is_prime(x: u32) -> u8 {
-    if x == 1 {
-        return 0;
-    };
-    if x % 2 == 0 {
-        return x == 2;
-    };
-    let d : u32 = 3;
-    while d * d <= x {
-        if x % d == 0 {
-            return 0;
-        };
-        d = d + 2;
-    };
-    1
+examples["Pointers"] = 
+`fn read_string(s_ptr: &u8) {
+    while 1 {
+        *s_ptr = read_char();
+        if *s_ptr == 10 {
+            *s_ptr = 0;
+            return;
+        }
+        s_ptr = s_ptr + 1;
+    }
+}
+
+fn print_string(s_ptr: &u8) {
+    while *s_ptr != 0 {
+        print_char(*s_ptr);
+        s_ptr = s_ptr + 1;
+    }
 }
 
 fn main() {
-    let x : u32 = 100000;
-    while x <= 100020 {
-        print(x);
-        if is_prime(x) {
-            println(" is prime");
-        } else {
-            println(" is not prime");
-        };
-        x = x + 1;
-    };
+    let top_of_stack : u8 = 0;
+    let s_ptr : &u8 = &top_of_stack + 1000;
+    println("Please enter your name: ");
+    read_string(s_ptr);
+    print("Hello ");
+    print_string(s_ptr);
+    println(".");
 }`;
 
-let examples_order = ["Prime test", "Naive Fibonacci", "Fast Fibonacci"];
+examples["Conversion"] = 
+`fn u32_to_u8(x: u32) -> u8 {
+    *(&x + 3)
+}
+
+fn u8_to_u32(x: u8) -> u32 {
+    let result : u32 = 0;
+    let p : &u8 = &result + 3;
+    *p = x;
+    result
+}
+
+fn main() {
+    println(u32_to_u8(3));
+    println(u8_to_u32(7));
+}`;
+
+let examples_order = ["Prime test", "Naive Fibonacci", "Fast Fibonacci", "Pointers"];
 let default_example = "Prime test";
 
 for (let example_name of examples_order) {
@@ -125,21 +171,6 @@ document.getElementById("debug_button").onclick = function() {
     document.getElementById("bf_output").value = result.output;
 };
 
-// Running:
-
-document.getElementById("run_button").onclick = function() {
-    let bf = document.getElementById("compiled_bf").value;
-    let input = document.getElementById("bf_input").value;
-
-    document.getElementById("bf_output").value = "Running...\n\nThis page will freeze until the entire program finishes.";
-
-    setTimeout(() => {
-        let result = wasm.parse_and_run_bf(bf, input);
-
-        document.getElementById("bf_output").value = result;
-    });
-}
-
 // JIT:
 
 let myWorker = null;
@@ -157,7 +188,7 @@ document.getElementById("jit_run_button").onclick = function() {
             document.getElementById("bf_status").textContent = "finished in "+getElapsed(runBfStart);
             document.getElementById("bf_status").className = "status_finished";
             document.getElementById("stop_bf_button").disabled = true;
-        } else if (msg_type == "async_request_more_input") {
+        } else if (msg_type == "need_more_input") {
             document.getElementById("bf_status").textContent = "awaiting input";
             document.getElementById("bf_status").className = "status_awaiting_input";
         } else if (msg_type == "error") {
@@ -206,3 +237,34 @@ function sendInput() {
     }
 }
 document.getElementById("send_input_button").onclick = sendInput;
+
+// Running:
+
+document.getElementById("run_button").onclick = function() {
+    let bf = document.getElementById("compiled_bf").value;
+    let input = document.getElementById("bf_input").value;
+
+    document.getElementById("bf_output").value = "Running...\n\nThis page will freeze until the entire program finishes.";
+
+    setTimeout(() => {
+        let result = wasm.parse_and_run_bf(bf, input);
+
+        document.getElementById("bf_output").value = result;
+    });
+}
+
+// Perf:
+
+document.getElementById("perf_button").onclick = function() {
+    let bf = document.getElementById("compiled_bf").value;
+    let input = document.getElementById("bf_input").value;
+
+    document.getElementById("bf_output").value = "Running...\n\nThis page will freeze until the entire program finishes.";
+
+    setTimeout(() => {
+        let result = wasm.perf_bf(bf, input);
+
+        document.getElementById("bf_output").value = result;
+        document.getElementById("bf_output").disabled = false;
+    });
+}

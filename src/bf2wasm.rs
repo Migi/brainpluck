@@ -99,7 +99,7 @@ fn asyncify(ops: Vec<BfOp>) -> Vec<AsyncifiedOp> {
             }
         }
     }
-    let mut global_async_block_counter = 0;
+    let mut global_async_block_counter = 1;
     set_counter_rec(&mut async_ops, &mut global_async_block_counter);
     async_ops
 }
@@ -139,7 +139,8 @@ pub fn bf2wasm(bf_ops: Vec<BfOp>, optimize_first: bool) -> wat::Result<Vec<u8>> 
                         "(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const -1)))\n";
                 }
                 BfOp::In => {
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (call $read_input_byte))\n";
+                    //*bf_wat += "(i32.store8 (local.get $cell_ptr) (call $read_input_byte))\n";
+                    panic!("Encountered In in sync ops!")
                 }
                 BfOp::Out => {
                     *bf_wat += "(call $write_output_byte (i32.load8_u (local.get $cell_ptr)))\n";
@@ -232,22 +233,31 @@ pub fn bf2wasm(bf_ops: Vec<BfOp>, optimize_first: bool) -> wat::Result<Vec<u8>> 
                 AsyncifiedOpKind::In => {
                     let inner_block_id = format!("{}_inner", cur_async_block_id);
                     *bf_wat += &format!("(block ${}\n", inner_block_id);
+                    *bf_wat += "(global.set $cell_ptr_global (local.get $cell_ptr))\n";
                     *bf_wat += "(local.set $tmp1 (call $read_input_byte))\n";
                     *bf_wat += &format!(
                         "(br_if ${} (i32.ne (i32.const 0) (local.get $tmp1)))\n",
                         inner_block_id
                     );
+                    *bf_wat += "(global.set $cell_ptr_global (local.get $cell_ptr))\n";
                     *bf_wat += &format!(
-                        "(call $async_request_more_input (local.get $cell_ptr) (i32.const {}))\n",
+                        "(global.set $async_start_block_global (i32.const {}))\n",
                         cur_async_block_counter
                     );
-                    // This is a bit of a cursed hack, but we set the current cell to a nonzero value
-                    // so that the next time the program is run, the loops are executed.
-                    // The value of the cell will get overridden by the input anyway.
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.const 1))\n";
+                    // restore the cell pointer if we are rewinding but still have no input
+                    // (see also the big comment block below).
+                    *bf_wat += "(block $restore_cell\n";
+                    *bf_wat += "(br_if $restore_cell (i32.eqz (local.get $async_start_block)))";
+                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (local.get $tmp2))";
+                    *bf_wat += ")\n";
+
+                    // return 1: need more input
                     *bf_wat += "(return (i32.const 1))\n";
                     *bf_wat += ")\n";
+
+                    // We have input, set $async_start_block to 0 so we just execute everthing from now on
                     *bf_wat += "(i32.store8 (local.get $cell_ptr) (local.get $tmp1))\n";
+                    *bf_wat += "(local.set $async_start_block (i32.const 0))\n";
                 }
                 AsyncifiedOpKind::AsyncLoop(ops) => {
                     let cur_loop_id = format!("async_bf_loop_{}", global_loop_counter);
@@ -272,23 +282,35 @@ pub fn bf2wasm(bf_ops: Vec<BfOp>, optimize_first: bool) -> wat::Result<Vec<u8>> 
     let mut global_loop_counter = 0;
     process_async_ops_rec(&async_ops, &mut bf_wat, &mut global_loop_counter);
 
-    let wat = format!(r#"
+    let mut wat = r#"
         (module
             (import "imports" "read_input_byte" (func $read_input_byte (result i32)))
-            (import "imports" "async_request_more_input" (func $async_request_more_input (param i32) (param i32)))
             (import "imports" "write_output_byte" (func $write_output_byte (param i32)))
-            (import "js" "mem" (memory 1))
-            (func $add (param $lhs i32) (param $rhs i32) (result i32)
-                local.get $rhs
-                call $write_output_byte
-                local.get $lhs
-                local.get $rhs
-                i32.add)
-            (export "add" (func $add))
-            (func $run_bf (param $cell_ptr i32) (param $async_start_block i32) (result i32) (local $tmp1 i32) (local $tmp2 i32)
-                {}
+            (import "imports" "tape" (memory 1))
+            (global $cell_ptr_global (mut i32) (i32.const 0))
+            (global $async_start_block_global (mut i32) (i32.const 0))
+            (export "cell_ptr" (global $cell_ptr_global))
+            (func $run_bf (result i32) (local $cell_ptr i32) (local $async_start_block i32)  (local $tmp1 i32) (local $tmp2 i32)
+                (local.set $cell_ptr (global.get $cell_ptr_global))
+                (local.set $async_start_block (global.get $async_start_block_global))"#.to_owned();
+    // This is a bit cursed, but if we're rewinding from a request for more input,
+    // then we set the current cell to 1 so that all the loops are executed
+    // until we encounter the "," instruction that caused the interruption.
+    // At that point, if input is available, the value of the cell will get overridden by the input anyway,
+    // and if not, we restore the cell (using $tmp2 to store what the cell was).
+    wat += r#"
+                (block $if_rewinding
+                    (br_if $if_rewinding (i32.eqz (local.get $async_start_block)))
+                    (br_if $if_rewinding (i32.eq (local.get $async_start_block) (i32.const 2147483647)))
+                    (local.set $tmp2 (i32.load8_u (local.get $cell_ptr)))
+                    (i32.store8 (local.get $cell_ptr) (i32.const 1))
+                )"#;
+    wat += &bf_wat;
+    wat += r#"
+                (global.set $cell_ptr_global (local.get $cell_ptr))
+                (global.set $async_start_block_global (i32.const 2147483647))
                 (return (i32.const 0)))
             (export "run_bf" (func $run_bf))
-        )"#, bf_wat).to_owned();
+        )"#;
     wat::parse_str(wat)
 }

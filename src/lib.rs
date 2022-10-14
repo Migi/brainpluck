@@ -20,6 +20,7 @@ mod sam2lir;
 extern crate console_error_panic_hook;
 extern crate nom;
 extern crate num;
+extern crate num_format;
 extern crate wat;
 
 use bf2wasm::bf2wasm;
@@ -49,7 +50,13 @@ fn maina() {
     let prog = parse_bf(&contents).unwrap_or_else(print_err);
     let mut state = BfState::new();
     state
-        .run_ops(&prog, &mut std::io::stdin(), &mut std::io::stdout(), None)
+        .run_ops(
+            &prog,
+            &mut std::io::stdin(),
+            &mut std::io::stdout(),
+            None,
+            None,
+        )
         .unwrap_or_else(print_err);
 }
 
@@ -92,7 +99,7 @@ fn mainc() {
     cpu.moveprint_byte(data.at(0), scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops, false, false));
+    println!("{}", ops2str(&ops, BfFormatOptions::clean()));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -100,6 +107,7 @@ fn mainc() {
             &mut std::io::stdin(),
             &mut std::io::stdout(),
             Some(&cfg),
+            None,
         )
         .unwrap_or_else(print_err);
 }
@@ -123,7 +131,7 @@ fn maind() {
     cpu.moveprint_byte(register.at(3), scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops, false, false));
+    println!("{}", ops2str(&ops, BfFormatOptions::clean()));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -131,6 +139,7 @@ fn maind() {
             &mut std::io::stdin(),
             &mut std::io::stdout(),
             Some(&cfg),
+            None,
         )
         .unwrap_or_else(print_err);
 }
@@ -146,7 +155,7 @@ fn maine() {
     cpu.moveprint_register_hex(register, scratch);
 
     let ops = lir2bf(&cpu.into_ops());
-    println!("{}", ops2str(&ops, false, false));
+    println!("{}", ops2str(&ops, BfFormatOptions::clean()));
     let mut state = BfState::new();
     state
         .run_ops(
@@ -154,6 +163,7 @@ fn maine() {
             &mut std::io::stdin(),
             &mut std::io::stdout(),
             Some(&cfg),
+            None,
         )
         .unwrap_or_else(print_err);
 
@@ -173,14 +183,19 @@ fn mainf() {
 
     let ops = lir2bf(&cpu.into_ops());
     let opt_ops = get_optimized_bf_ops(&ops);
-    println!("{}", ops2str(&opt_ops, true, false));
-    println!("Num instrs: {}", ops2str(&ops, false, true).chars().count());
+    println!("{}", ops2str(&opt_ops, BfFormatOptions::clean()));
+    println!(
+        "Num instrs: {}",
+        ops2str(&ops, BfFormatOptions::clean()).chars().count()
+    );
     let mut state = BfState::new();
+    let mut loop_count = LoopCount::new();
     let result = state.run_ops(
         &opt_ops,
         &mut std::io::stdin(),
         &mut std::io::stdout(),
         Some(&cfg),
+        Some(&mut loop_count),
     );
     println!();
     match result {
@@ -192,7 +207,7 @@ fn mainf() {
         }
     }
     state.print_state(&cfg);
-    println!("Instrs executed: {}", state.get_instrs_executed());
+    println!("Instrs executed: {}", loop_count.get_instrs_executed());
 }
 
 #[allow(unused)]
@@ -232,15 +247,20 @@ fn main() {
     let (ops, cfg) = sam2lir(linked);
     let ops = lir2bf(&ops);
     let opt_ops = get_optimized_bf_ops(&ops);
-    println!("{}", ops2str(&opt_ops, true, false));
-    println!("Num instrs: {}", ops2str(&ops, false, true).chars().count());
+    println!("{}", ops2str(&opt_ops, BfFormatOptions::with_opts()));
+    println!(
+        "Num instrs: {}",
+        ops2str(&ops, BfFormatOptions::clean()).chars().count()
+    );
 
     let mut state = BfState::new();
+    let mut loop_count = LoopCount::new();
     let result = state.run_ops(
         &opt_ops,
         &mut std::io::stdin(),
         &mut std::io::stdout(),
         Some(&cfg),
+        Some(&mut loop_count),
     );
     println!();
     match result {
@@ -252,8 +272,11 @@ fn main() {
         }
     }
     state.print_state(&cfg);
-    println!("Num instrs: {}", ops2str(&ops, false, true).chars().count());
-    println!("Instrs executed: {}", state.get_instrs_executed());
+    println!(
+        "Num instrs: {}",
+        ops2str(&ops, BfFormatOptions::clean()).chars().count()
+    );
+    println!("Instrs executed: {}", loop_count.get_instrs_executed());
 }
 
 /// Returns the version of the program.
@@ -294,7 +317,7 @@ pub fn compile(hir: &str) -> CompilationResult {
     let (ops, _cfg) = sam2lir(linked);
     let ops = lir2bf(&ops);
 
-    let bf = ops2str(&ops, false, true);
+    let bf = ops2str(&ops, BfFormatOptions::clean());
 
     let bf = bf
         .as_bytes()
@@ -372,7 +395,7 @@ pub fn parse_and_run_bf(bf: &str, input: &str) -> String {
     let mut r = input.as_bytes();
     let mut w = Vec::new();
     bf_state
-        .run_ops(&opt_ops, &mut r, &mut w, None)
+        .run_ops(&opt_ops, &mut r, &mut w, None, None)
         .expect("error running bf program");
     String::from_utf8_lossy(w.as_bytes()).to_string()
 }
@@ -382,6 +405,20 @@ pub fn compile_bf_to_wasm(bf: &str) -> Vec<u8> {
     let ops = parse_bf(bf).unwrap_or_else(|e| panic!("Unable to parse bf: {:?}", e));
     let wasm_bytes = bf2wasm(ops, true).unwrap_or_else(|e| panic!("Unable to parse wat: {:?}", e));
     wasm_bytes
+}
+
+#[wasm_bindgen]
+pub fn perf_bf(bf: &str, input: &str) -> String {
+    let ops = parse_bf(bf).unwrap_or_else(|e| panic!("Unable to parse bf: {:?}", e));
+    let opt_ops = get_optimized_bf_ops(&ops);
+    let mut bf_state = BfState::new();
+    let mut r = input.as_bytes();
+    let mut w = Vec::new();
+    let mut loop_count = LoopCount::new();
+    bf_state
+        .run_ops(&opt_ops, &mut r, &mut w, None, Some(&mut loop_count))
+        .expect("error running bf program");
+    ops2str(&opt_ops, BfFormatOptions::perf_clean(&loop_count))
 }
 
 #[cfg(test)]
@@ -394,7 +431,7 @@ mod test {
         let mut r = i.as_bytes();
         let mut w = Vec::new();
         state
-            .run_ops(&prog, &mut r, &mut w, cfg)
+            .run_ops(&prog, &mut r, &mut w, cfg, None)
             .unwrap_or_else(print_err);
         assert_eq!(w, o.as_bytes());
         if let Some(cfg) = cfg {
@@ -536,6 +573,30 @@ mod test {
         cpu.set_binregister(reg2, 391490498u64, scratch);
         cpu.add_binregister_to_binregister(reg1, reg2, scratch);
         cpu.print_binregister_in_binary(reg2, scratch);
+
+        test_lir_prog(
+            &cpu.into_ops(),
+            "",
+            "0b01000110011010000010110110101100",
+            &cfg,
+        );
+    }
+
+    #[test]
+    fn test_add_registers() {
+        let mut cfg = CpuConfig::new();
+        let mut register_builder = cfg.build_register_track(TrackId::Register1);
+        let reg1 = register_builder.add_register(4);
+        let reg2 = register_builder.add_register(4);
+        let reg3 = register_builder.add_binregister(32);
+        let scratch = cfg.add_scratch_track(TrackId::Scratch1);
+        let mut cpu = Cpu::new(&cfg);
+
+        cpu.set_register(reg1, 789742058u64);
+        cpu.set_register(reg2, 391490498u64);
+        cpu.add_register_to_register(reg1, reg2, scratch);
+        cpu.unpack_register(reg2, reg3, scratch, false);
+        cpu.print_binregister_in_binary(reg3, scratch);
 
         test_lir_prog(
             &cpu.into_ops(),

@@ -1,4 +1,5 @@
 use crate::{CpuConfig, TrackKind};
+use num_format::{Locale, ToFormattedString};
 use std::cell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -62,11 +63,26 @@ pub fn parse_bf(s: &str) -> Result<Vec<BfOp>, ParseBfProgError> {
         ops: vec![],
     }];
     for (line_num, line) in s.lines().enumerate() {
+        let mut comment = String::new();
         for (col, c) in line.chars().enumerate() {
             let pos = TextPos {
                 line_num: line_num + 1,
                 col: col + 1,
             };
+            if "<>+-,.[]".contains(c) {
+                if !comment.is_empty() {
+                    stack
+                        .last_mut()
+                        .unwrap()
+                        .ops
+                        .push(BfOp::Comment(std::mem::replace(
+                            &mut comment,
+                            String::new(),
+                        )));
+                }
+            } else {
+                comment.push(c);
+            }
             if c == '<' {
                 stack.last_mut().unwrap().ops.push(BfOp::Left);
             } else if c == '>' {
@@ -94,6 +110,9 @@ pub fn parse_bf(s: &str) -> Result<Vec<BfOp>, ParseBfProgError> {
                     stack.last_mut().unwrap().ops.push(BfOp::Loop(top.ops));
                 }
             }
+        }
+        if !comment.is_empty() {
+            stack.last_mut().unwrap().ops.push(BfOp::Comment(comment));
         }
     }
 
@@ -278,12 +297,6 @@ pub fn get_optimized_bf_ops(ops: &Vec<BfOp>) -> Vec<BfOp> {
     result
 }
 
-pub struct BfState {
-    cells: Vec<u8>,
-    cell_ptr: usize,
-    instrs_executed: u64,
-}
-
 #[derive(Debug)]
 pub enum RunOpError {
     PtrOutOfBounds,
@@ -293,17 +306,17 @@ pub enum RunOpError {
     Other(String),
 }
 
+pub struct BfState {
+    cells: Vec<u8>,
+    cell_ptr: usize,
+}
+
 impl BfState {
     pub fn new() -> BfState {
         BfState {
             cells: vec![0; 1],
             cell_ptr: 0,
-            instrs_executed: 0,
         }
-    }
-
-    pub fn get_instrs_executed(&self) -> u64 {
-        self.instrs_executed
     }
 
     fn get_valid_ptr(&mut self, shift: i16) -> Result<usize, RunOpError> {
@@ -325,8 +338,21 @@ impl BfState {
         get_char_in: &mut impl FnMut() -> Result<u8, RunOpError>,
         write_char_out: &mut impl FnMut(u8) -> Result<(), RunOpError>,
         cpu_config: Option<&CpuConfig>,
+        mut loop_count: Option<&mut LoopCount>,
     ) -> Result<(), RunOpError> {
-        self.instrs_executed += 1;
+        if let Some(loop_count) = &mut loop_count {
+            match op {
+                BfOp::Comment(_) => {}
+                BfOp::Breakpoint => {}
+                BfOp::DebugMessage(_) => {}
+                BfOp::CheckScratchIsEmptyFromHere(_) => {}
+                BfOp::PrintRegisters => {}
+                _ => {
+                    loop_count.self_instrs_executed += 1;
+                    loop_count.tot_instrs_executed += 1;
+                }
+            }
+        }
         match op {
             BfOp::Left => {
                 if self.cell_ptr == 0 {
@@ -355,8 +381,33 @@ impl BfState {
                 write_char_out(byte)?;
             }
             BfOp::Loop(ops) => {
-                while self.cells[self.cell_ptr] != 0 {
-                    self.run_ops_f(ops, &mut *get_char_in, &mut *write_char_out, cpu_config)?;
+                if let Some(loop_count) = loop_count {
+                    loop_count.tot_instrs_executed += loop_count.goto_next_loop(|loop_count| {
+                        let at_begin = loop_count.tot_instrs_executed;
+                        while self.cells[self.cell_ptr] != 0 {
+                            loop_count.num_times_loop_run += 1;
+                            loop_count.next_loop = 0;
+                            self.run_ops_f(
+                                ops,
+                                &mut *get_char_in,
+                                &mut *write_char_out,
+                                cpu_config,
+                                Some(&mut *loop_count),
+                            )?;
+                        }
+                        assert!(loop_count.tot_instrs_executed >= at_begin);
+                        Ok(loop_count.tot_instrs_executed - at_begin)
+                    })?;
+                } else {
+                    while self.cells[self.cell_ptr] != 0 {
+                        self.run_ops_f(
+                            ops,
+                            &mut *get_char_in,
+                            &mut *write_char_out,
+                            cpu_config,
+                            None,
+                        )?;
+                    }
                 }
             }
             BfOp::Clr => {
@@ -428,6 +479,7 @@ impl BfState {
         reader: &mut impl Read,
         writer: &mut impl Write,
         cpu_config: Option<&CpuConfig>,
+        loop_count: Option<&mut LoopCount>,
     ) -> Result<(), RunOpError> {
         self.run_ops_f(
             ops,
@@ -469,6 +521,7 @@ impl BfState {
                 }
             },
             cpu_config,
+            loop_count,
         )
     }
 
@@ -478,9 +531,16 @@ impl BfState {
         get_char_in: &mut impl FnMut() -> Result<u8, RunOpError>,
         write_char_out: &mut impl FnMut(u8) -> Result<(), RunOpError>,
         cpu_config: Option<&CpuConfig>,
+        mut loop_count: Option<&mut LoopCount>,
     ) -> Result<(), RunOpError> {
         for op in ops {
-            self.run_op_f(op, &mut *get_char_in, &mut *write_char_out, cpu_config)?;
+            self.run_op_f(
+                op,
+                &mut *get_char_in,
+                &mut *write_char_out,
+                cpu_config,
+                loop_count.as_deref_mut(),
+            )?;
         }
         Ok(())
     }
@@ -618,7 +678,71 @@ impl BfState {
     }
 }
 
-pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool, clean_output: bool) -> String {
+pub struct BfFormatOptions<'a> {
+    pub print_optimizations: bool,
+    pub clean_output: bool,
+    pub indented: bool,
+    pub only_loops_and_comments: bool,
+    pub loop_count: Option<&'a LoopCount>,
+}
+
+impl<'a> BfFormatOptions<'a> {
+    pub fn clean() -> BfFormatOptions<'static> {
+        BfFormatOptions {
+            print_optimizations: false,
+            clean_output: true,
+            indented: false,
+            only_loops_and_comments: false,
+            loop_count: None,
+        }
+    }
+
+    pub fn clean_with_comments() -> BfFormatOptions<'static> {
+        BfFormatOptions {
+            print_optimizations: false,
+            clean_output: false,
+            indented: false,
+            only_loops_and_comments: false,
+            loop_count: None,
+        }
+    }
+
+    pub fn with_opts() -> BfFormatOptions<'static> {
+        BfFormatOptions {
+            print_optimizations: true,
+            clean_output: false,
+            indented: false,
+            only_loops_and_comments: false,
+            loop_count: None,
+        }
+    }
+
+    pub fn perf_clean(loop_count: &'a LoopCount) -> BfFormatOptions {
+        BfFormatOptions {
+            print_optimizations: false,
+            clean_output: false,
+            indented: true,
+            only_loops_and_comments: true,
+            loop_count: Some(loop_count),
+        }
+    }
+
+    pub fn perf_verbose(loop_count: &'a LoopCount) -> BfFormatOptions {
+        BfFormatOptions {
+            print_optimizations: true,
+            clean_output: false,
+            indented: true,
+            only_loops_and_comments: false,
+            loop_count: Some(loop_count),
+        }
+    }
+
+    fn should_print_optimizations(&self) -> bool {
+        self.print_optimizations && !self.clean_output
+    }
+}
+
+pub fn ops2str(ops: &Vec<BfOp>, format_opts: BfFormatOptions) -> String {
     fn write_shift(result: &mut String, shift: i16) {
         if shift < 0 {
             for _ in 0..-shift {
@@ -631,134 +755,203 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool, clean_output: bool) -
         }
     }
 
-    fn rec(ops: &Vec<BfOp>, result: &mut String, print_optimizations: bool, clean_output: bool) {
+    fn rec(
+        ops: &Vec<BfOp>,
+        result: &mut String,
+        format_opts: &BfFormatOptions,
+        cur_indent_level: Option<usize>,
+        mut loop_count: Option<(&LoopCount, usize)>,
+    ) {
         for op in ops {
             match op {
                 BfOp::Left => {
-                    *result += "<";
+                    if !format_opts.only_loops_and_comments {
+                        *result += "<";
+                    }
                 }
                 BfOp::Right => {
-                    *result += ">";
+                    if !format_opts.only_loops_and_comments {
+                        *result += ">";
+                    }
                 }
                 BfOp::Inc => {
-                    *result += "+";
+                    if !format_opts.only_loops_and_comments {
+                        *result += "+";
+                    }
                 }
                 BfOp::Dec => {
-                    *result += "-";
+                    if !format_opts.only_loops_and_comments {
+                        *result += "-";
+                    }
                 }
                 BfOp::In => {
-                    *result += ",";
+                    if !format_opts.only_loops_and_comments {
+                        *result += ",";
+                    }
                 }
                 BfOp::Out => {
-                    *result += ".";
+                    if !format_opts.only_loops_and_comments {
+                        *result += ".";
+                    }
                 }
                 BfOp::Loop(ops) => {
                     *result += "[";
-                    rec(ops, result, print_optimizations, clean_output);
+                    if let Some(loop_count) = &mut loop_count {
+                        *result += &format!(
+                            "{}",
+                            loop_count
+                                .0
+                                .children_counts
+                                .get(loop_count.1)
+                                .map(|l| l.tot_instrs_executed.to_formatted_string(&Locale::en))
+                                .unwrap_or("0".to_string())
+                        );
+                    }
+                    if let Some(cur_indent_level) = cur_indent_level {
+                        *result += "\n";
+                        for _ in 0..=cur_indent_level {
+                            *result += " ";
+                        }
+                    }
+                    let rec_loop_count = if let Some((loop_count, i)) = &loop_count {
+                        if let Some(child_loop_count) = loop_count.children_counts.get(*i) {
+                            Some((child_loop_count, 0))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    rec(
+                        ops,
+                        result,
+                        format_opts,
+                        cur_indent_level.map(|x| x + 1),
+                        rec_loop_count,
+                    );
+                    if let Some((_, i)) = &mut loop_count {
+                        *i += 1;
+                    }
+                    if let Some(cur_indent_level) = cur_indent_level {
+                        *result += "\n";
+                        for _ in 0..cur_indent_level {
+                            *result += " ";
+                        }
+                    }
                     *result += "]";
                 }
                 BfOp::Clr => {
-                    if print_optimizations && !clean_output {
-                        *result += "Clr";
-                    } else {
-                        *result += "[-]";
+                    if !format_opts.only_loops_and_comments {
+                        if format_opts.should_print_optimizations() {
+                            *result += "Clr";
+                        } else {
+                            *result += "[-]";
+                        }
                     }
                 }
                 BfOp::Shift(shift) => {
-                    if print_optimizations && !clean_output {
-                        *result += &format!("Shift({})", shift);
-                    } else {
-                        write_shift(result, *shift);
+                    if !format_opts.only_loops_and_comments {
+                        if format_opts.should_print_optimizations() {
+                            *result += &format!("Shift({})", shift);
+                        } else {
+                            write_shift(result, *shift);
+                        }
                     }
                 }
                 BfOp::Add(val) => {
-                    if print_optimizations && !clean_output {
-                        *result += &format!("Add({})", val);
-                    } else {
-                        if *val <= 128 {
-                            for _ in 0..*val {
-                                *result += "+";
-                            }
+                    if !format_opts.only_loops_and_comments {
+                        if format_opts.should_print_optimizations() {
+                            *result += &format!("Add({})", val);
                         } else {
-                            for _ in *val..=255 {
-                                *result += "-";
+                            if *val <= 128 {
+                                for _ in 0..*val {
+                                    *result += "+";
+                                }
+                            } else {
+                                for _ in *val..=255 {
+                                    *result += "-";
+                                }
                             }
                         }
                     }
                 }
                 BfOp::MoveAdd(shift) => {
-                    if print_optimizations && !clean_output {
-                        *result += &format!("MoveAdd({})", shift);
-                    } else {
-                        *result += "[-";
-                        write_shift(result, *shift);
-                        *result += "+";
-                        write_shift(result, -*shift);
-                        *result += "]";
+                    if !format_opts.only_loops_and_comments {
+                        if format_opts.should_print_optimizations() {
+                            *result += &format!("MoveAdd({})", shift);
+                        } else {
+                            *result += "[-";
+                            write_shift(result, *shift);
+                            *result += "+";
+                            write_shift(result, -*shift);
+                            *result += "]";
+                        }
                     }
                 }
                 BfOp::MoveAdd2(shift1, shift2) => {
-                    if print_optimizations && !clean_output {
-                        *result += &format!("MoveAdd2({}, {})", shift1, shift2);
-                    } else {
-                        *result += "[-";
-                        write_shift(result, *shift1);
-                        *result += "+";
-                        write_shift(result, *shift2 - *shift1);
-                        *result += "+";
-                        write_shift(result, -*shift2);
-                        *result += "]";
+                    if !format_opts.only_loops_and_comments {
+                        if format_opts.should_print_optimizations() {
+                            *result += &format!("MoveAdd2({}, {})", shift1, shift2);
+                        } else {
+                            *result += "[-";
+                            write_shift(result, *shift1);
+                            *result += "+";
+                            write_shift(result, *shift2 - *shift1);
+                            *result += "+";
+                            write_shift(result, -*shift2);
+                            *result += "]";
+                        }
                     }
                 }
                 BfOp::Comment(msg) => {
-                    if clean_output {
+                    if format_opts.clean_output {
                         // no output
-                    } else if print_optimizations && !clean_output {
+                    } else if format_opts.should_print_optimizations() {
                         *result += &format!("Comment({})", msg);
                     } else {
                         *result += msg;
                     }
                 }
                 BfOp::DebugMessage(msg) => {
-                    if clean_output {
+                    if format_opts.clean_output {
                         // no output
-                    } else if print_optimizations {
+                    } else if format_opts.should_print_optimizations() {
                         *result += &format!("DebugMessage({})", msg);
                     } else {
                         *result += "#";
                     }
                 }
                 BfOp::Crash(msg) => {
-                    if clean_output {
+                    if format_opts.clean_output {
                         // no output
-                    } else if print_optimizations {
+                    } else if format_opts.should_print_optimizations() {
                         *result += &format!("Crash({})", msg);
                     } else {
                         *result += "!";
                     }
                 }
                 BfOp::Breakpoint => {
-                    if clean_output {
+                    if format_opts.clean_output {
                         // no output
-                    } else if print_optimizations {
+                    } else if format_opts.should_print_optimizations() {
                         *result += "Breakpoint";
                     } else {
                         *result += "$";
                     }
                 }
                 BfOp::PrintRegisters => {
-                    if clean_output {
+                    if format_opts.clean_output {
                         // no output
-                    } else if print_optimizations {
+                    } else if format_opts.should_print_optimizations() {
                         *result += "PrintRegisters";
                     } else {
                         *result += "";
                     }
                 }
                 BfOp::CheckScratchIsEmptyFromHere(msg) => {
-                    if clean_output {
+                    if format_opts.clean_output {
                         // no output
-                    } else if print_optimizations {
+                    } else if format_opts.should_print_optimizations() {
                         *result += &format!("CheckScratchIsEmptyFromHere({})", msg);
                     } else {
                         *result += "&";
@@ -769,6 +962,58 @@ pub fn ops2str(ops: &Vec<BfOp>, print_optimizations: bool, clean_output: bool) -
     }
 
     let mut result = String::new();
-    rec(ops, &mut result, print_optimizations, clean_output);
+    let cur_indent_level = if format_opts.indented { Some(0) } else { None };
+    rec(
+        ops,
+        &mut result,
+        &format_opts,
+        cur_indent_level,
+        format_opts.loop_count.map(|l| (l, 0)),
+    );
     result
+}
+
+#[derive(Debug)]
+pub struct LoopCount {
+    self_instrs_executed: u64,
+    tot_instrs_executed: u64,
+    num_times_loop_run: u64,
+    children_counts: Vec<LoopCount>,
+    next_loop: usize,
+}
+
+impl LoopCount {
+    pub fn new() -> LoopCount {
+        LoopCount {
+            self_instrs_executed: 0,
+            tot_instrs_executed: 0,
+            num_times_loop_run: 0,
+            children_counts: Vec::new(),
+            next_loop: 0,
+        }
+    }
+
+    fn goto_next_loop<R>(&mut self, f: impl FnOnce(&mut LoopCount) -> R) -> R {
+        if self.next_loop >= self.children_counts.len() {
+            self.children_counts.push(LoopCount {
+                self_instrs_executed: 0,
+                tot_instrs_executed: 0,
+                num_times_loop_run: 0,
+                children_counts: Vec::new(),
+                next_loop: 0,
+            });
+        }
+        assert!(self.next_loop < self.children_counts.len());
+        let ret_val = f(&mut self.children_counts[self.next_loop]);
+        self.next_loop += 1;
+        ret_val
+    }
+
+    pub fn get_self_instrs_executed(&self) -> u64 {
+        self.self_instrs_executed
+    }
+
+    pub fn get_instrs_executed(&self) -> u64 {
+        self.tot_instrs_executed
+    }
 }

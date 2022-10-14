@@ -6,6 +6,30 @@ use num::Num;
 
 use std::collections::BTreeMap;
 
+use wasm_bindgen::prelude::*;
+#[wasm_bindgen]
+extern "C" {
+    // Use `js_namespace` here to bind `console.log(..)` instead of just
+    // `log(..)`
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+
+    // The `console.log` is quite polymorphic, so we can bind it with multiple
+    // signatures. Note that we need to use `js_name` to ensure we always call
+    // `log` in JS.
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn log_u32(a: u32);
+
+    // Multiple arguments too!
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn log_many(a: &str, b: &str);
+}
+macro_rules! _console_log {
+    // Note that this is using the `log` function imported above during
+    // `bare_bones`
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+}
+
 // calling convention (stack):
 // - return value value
 // - arguments
@@ -24,14 +48,40 @@ pub fn hir2sam(program: &Program) -> BTreeMap<String, SamFn> {
             function.name.clone(),
             SamFn {
                 name: function.name.clone(),
-                arg_sizes: function.args.iter().map(|x| type_size(x.typ)).collect(),
-                ret_size: type_size(function.ret),
+                arg_sizes: function.args.iter().map(|x| type_size(&x.typ)).collect(),
+                ret_size: type_size(&function.ret),
                 blocks: sam_block_arena.blocks,
             },
         );
         assert!(prev.is_none());
     }
     sam_fns
+}
+
+#[derive(Clone)]
+struct BuiltInFn {
+    name: String,
+    ret_type: VarType,
+}
+
+fn get_builtin_fn(name: &str) -> Option<BuiltInFn> {
+    let mut map = BTreeMap::new();
+    {
+        let mut insert_builtin = |name: &str, ret_type: VarType| {
+            map.insert(
+                name.to_owned(),
+                BuiltInFn {
+                    name: name.to_owned(),
+                    ret_type,
+                },
+            );
+        };
+        insert_builtin("println", VarType::Unit);
+        insert_builtin("print", VarType::Unit);
+        insert_builtin("print_char", VarType::Unit);
+        insert_builtin("read_char", VarType::U8);
+    }
+    map.get(name).cloned()
 }
 
 fn biguint_to_u32(ui: &BigUint) -> u32 {
@@ -54,7 +104,7 @@ fn biguint_to_u8(ui: &BigUint) -> u8 {
     *ui_bytes.last().unwrap()
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 struct LocalVar<'a> {
     name: &'a str,
     typ: VarType,
@@ -67,7 +117,7 @@ struct Locals<'a> {
     cur_stack_size: u32,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone, Debug)]
 enum Dest<'a> {
     None,
     Local(LocalVar<'a>),
@@ -124,46 +174,49 @@ impl<'o> SamBlockWriter<'o> {
 }
 
 impl<'a> Locals<'a> {
-    fn get(&self, name: &'a str) -> &LocalVar<'a> {
-        self.locals.get(name).expect("Accessing unknown local")
+    fn get(&self, name: &'a str) -> LocalVar<'a> {
+        self.locals
+            .get(name)
+            .expect(&format!("Accessing unknown local {:?}", name))
+            .clone()
     }
 
-    fn create(&mut self, name: Option<&'a str>, typ: VarType) -> LocalVar<'a> {
+    fn create(&mut self, name: Option<&'a str>, typ: &VarType) -> LocalVar<'a> {
         let result = LocalVar {
             name: name.unwrap_or("$temp"),
-            typ,
+            typ: typ.clone(),
             location: self.cur_stack_size,
         };
         if let Some(name) = name {
-            self.locals.insert(name, result);
+            self.locals.insert(name, result.clone());
         }
-        self.cur_stack_size += type_size(typ);
+        self.cur_stack_size += type_size(&typ);
         result
     }
 
-    fn new_named(&mut self, name: &'a str, typ: VarType) -> LocalVar<'a> {
+    fn new_named(&mut self, name: &'a str, typ: &VarType) -> LocalVar<'a> {
         self.create(Some(name), typ)
     }
 
-    fn new_temp(&mut self, typ: VarType) -> LocalVar<'a> {
+    fn new_temp(&mut self, typ: &VarType) -> LocalVar<'a> {
         self.create(None, typ)
     }
 }
 
-fn type_size(typ: VarType) -> u32 {
+fn type_size(typ: &VarType) -> u32 {
     match typ {
         VarType::U8 => 1,
+        VarType::Bool => 1,
         VarType::U32 => 4,
         VarType::Unit => 0,
         VarType::StringLiteral => 0,
+        VarType::PtrTo(_) => 4,
     }
 }
 
-fn types_compatible(type1: VarType, type2: Option<VarType>) -> bool {
-    match type2 {
-        Some(type2) => type1 == type2,
-        None => true,
-    }
+fn are_types_compatible(type1: &VarType, type2: &VarType) -> bool {
+    // be generous
+    type_size(type1) == type_size(type2)
 }
 
 struct SamCpu<'a, 'o> {
@@ -186,11 +239,11 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             locals: BTreeMap::new(),
             cur_stack_size: 0,
         };
-        let valret_local = locals.new_temp(decl.ret);
+        let valret_local = locals.new_temp(&decl.ret);
         for arg in &decl.args {
-            locals.new_named(&arg.name, arg.typ);
+            locals.new_named(&arg.name, &arg.typ);
         }
-        let iret_local = locals.new_temp(VarType::U32);
+        let iret_local = locals.new_temp(&VarType::U32);
         SamCpu {
             locals,
             out: arena.new_block_writer(),
@@ -208,8 +261,8 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 out: self.out.reborrow_mut(),
                 cur_b_offset: self.cur_b_offset,
                 fn_decls: self.fn_decls,
-                valret_local: self.valret_local,
-                iret_local: self.iret_local,
+                valret_local: self.valret_local.clone(),
+                iret_local: self.iret_local.clone(),
             };
             (f(&mut cpu), cpu.cur_b_offset, cpu.out.block_index)
         };
@@ -228,8 +281,8 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             out: child_out,
             cur_b_offset: self.cur_b_offset,
             fn_decls: self.fn_decls,
-            valret_local: self.valret_local,
-            iret_local: self.iret_local,
+            valret_local: self.valret_local.clone(),
+            iret_local: self.iret_local.clone(),
         };
         let entry_index = cpu.out.block_index;
         f(&mut cpu);
@@ -261,7 +314,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
     pub fn get_expr_type(&self, expr: &'a Expr) -> Option<VarType> {
         match expr {
             Expr::Literal(_lit) => None,
-            Expr::VarRef(varref) => Some(self.locals.get(varref).typ),
+            Expr::VarRef(varref) => Some(self.locals.get(varref).typ.clone()),
             Expr::BinOp(binop) => {
                 if let BinOpKind::Cmp(_) = binop.kind {
                     Some(VarType::U8)
@@ -283,12 +336,15 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     }
                 }
             }
-            Expr::FnCall(f) => Some(
+            Expr::FnCall(f) => Some(if let Some(builtin_fn) = get_builtin_fn(&f.fn_name) {
+                builtin_fn.ret_type
+            } else {
                 self.fn_decls
                     .get(&f.fn_name)
-                    .expect("Calling unknown fn")
-                    .ret,
-            ),
+                    .expect(&format!("Calling unknown function {:?}", f.fn_name))
+                    .ret
+                    .clone()
+            }),
             Expr::Scope(s) => match &s.final_expr {
                 Some(e) => self.get_expr_type(e),
                 None => Some(VarType::Unit),
@@ -311,6 +367,24 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 }
             }
             Expr::StringLiteral(_) => Some(VarType::StringLiteral),
+            Expr::Deref(e) => {
+                let ptr_type = self.get_expr_type(e);
+                if let Some(ptr_type) = ptr_type {
+                    match ptr_type {
+                        VarType::PtrTo(pointed_type) => Some((*pointed_type).clone()),
+                        _ => panic!(
+                            "Dereferencing {:?} which is not a pointer but a {:?}",
+                            e, ptr_type
+                        ),
+                    }
+                } else {
+                    None
+                }
+            }
+            Expr::AddressOf(ident) => {
+                let local = self.locals.get(&ident);
+                Some(VarType::PtrTo(Box::new(local.typ.clone())))
+            }
         }
     }
 
@@ -324,42 +398,42 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             .add_op(SamLOp::Simple(SamSOp::SetA(biguint_to_u32(val))));
     }
 
-    pub fn write_x_at(&mut self, local: LocalVar<'a>) {
-        assert_eq!(local.typ, VarType::U8);
+    pub fn write_x_at(&mut self, local: &LocalVar<'a>) {
+        assert!(are_types_compatible(&local.typ, &VarType::U8));
         self.goto_b_offset(local.location);
         self.out.add_op(SamLOp::Simple(SamSOp::WriteXAtB));
     }
 
-    pub fn write_a_at(&mut self, local: LocalVar<'a>) {
-        assert_eq!(local.typ, VarType::U32);
+    pub fn write_a_at(&mut self, local: &LocalVar<'a>) {
+        assert!(are_types_compatible(&local.typ, &VarType::U32));
         self.goto_b_offset(local.location);
         self.out.add_op(SamLOp::Simple(SamSOp::WriteAAtB));
     }
 
-    pub fn read_x_at(&mut self, local: LocalVar<'a>) {
-        assert_eq!(local.typ, VarType::U8);
+    pub fn read_x_at(&mut self, local: &LocalVar<'a>) {
+        assert!(are_types_compatible(&local.typ, &VarType::U8));
         self.goto_b_offset(local.location);
         self.out.add_op(SamLOp::Simple(SamSOp::ReadXAtB));
     }
 
-    pub fn read_a_at(&mut self, local: LocalVar<'a>) {
-        assert_eq!(local.typ, VarType::U32);
+    pub fn read_a_at(&mut self, local: &LocalVar<'a>) {
+        assert!(are_types_compatible(&local.typ, &VarType::U32));
         self.goto_b_offset(local.location);
         self.out.add_op(SamLOp::Simple(SamSOp::ReadAAtB));
     }
 
-    pub fn copy_local_to_local(&mut self, a: LocalVar<'a>, b: LocalVar<'a>) {
-        assert_eq!(a.typ, b.typ);
+    pub fn copy_local_to_local(&mut self, a: &LocalVar<'a>, b: &LocalVar<'a>) {
+        assert!(are_types_compatible(&a.typ, &b.typ));
         if a.location == b.location {
             return;
         }
-        match a.typ {
+        match &a.typ {
             VarType::Unit => {}
-            VarType::U8 => {
+            VarType::U8 | VarType::Bool => {
                 self.read_x_at(a);
                 self.write_x_at(b);
             }
-            VarType::U32 => {
+            VarType::U32 | VarType::PtrTo(_) => {
                 self.read_a_at(a);
                 self.write_a_at(b);
             }
@@ -368,24 +442,14 @@ impl<'a, 'o> SamCpu<'a, 'o> {
     }
 
     pub fn ret(&mut self, val: Option<&'a Expr>) {
-        /*println!("In RET. Cur b offset = {}. Valret local = {}, iret local = {}",
-            self.cur_b_offset,
-            self.valret_local.location,
-            self.iret_local.location
-        );*/
         if let Some(val) = val {
-            self.eval_expr(val, Dest::Local(self.valret_local));
+            self.eval_expr(val, &Dest::Local(self.valret_local.clone()));
         }
-        /*println!("B4 RET. Cur b offset = {}. Valret local = {}, iret local = {}",
-            self.cur_b_offset,
-            self.valret_local.location,
-            self.iret_local.location
-        );*/
         self.goto_b_offset(self.iret_local.location);
         self.out.add_op(SamLOp::Simple(SamSOp::Ret));
     }
 
-    pub fn eval_expr(&mut self, expr: &'a Expr, dest: Dest<'a>) {
+    pub fn eval_expr(&mut self, expr: &'a Expr, dest: &Dest<'a>) {
         //let expr_type = self.get_expr_type(expr);
         match expr {
             Expr::Literal(lit) => match dest {
@@ -397,14 +461,16 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     self.set_a(lit);
                 }
                 Dest::Local(local) => {
-                    assert!(types_compatible(local.typ, self.get_expr_type(expr)));
-                    match local.typ {
+                    if let Some(expr_type) = self.get_expr_type(expr) {
+                        assert!(are_types_compatible(&local.typ, &expr_type));
+                    }
+                    match &local.typ {
                         VarType::Unit => unreachable!(),
-                        VarType::U8 => {
+                        VarType::U8 | VarType::Bool => {
                             self.set_x(lit);
                             self.write_x_at(local);
                         }
-                        VarType::U32 => {
+                        VarType::U32 | VarType::PtrTo(_) => {
                             self.set_a(lit);
                             self.write_a_at(local);
                         }
@@ -413,13 +479,13 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 }
             },
             Expr::VarRef(varref) => {
-                let varref_local = *self.locals.get(varref);
+                let varref_local = self.locals.get(varref);
                 match dest {
                     Dest::None => {}
-                    Dest::X => self.read_x_at(varref_local),
-                    Dest::A => self.read_a_at(varref_local),
+                    Dest::X => self.read_x_at(&varref_local),
+                    Dest::A => self.read_a_at(&varref_local),
                     Dest::Local(local) => {
-                        self.copy_local_to_local(varref_local, local);
+                        self.copy_local_to_local(&varref_local, local);
                     }
                 }
             }
@@ -435,7 +501,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     }
                     Dest::X => {
                         if let Some(typ) = maybe_typ {
-                            assert_eq!(typ, VarType::U8);
+                            assert!(are_types_compatible(&typ, &VarType::U8));
                             typ
                         } else {
                             VarType::U8
@@ -443,7 +509,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     }
                     Dest::A => {
                         if let Some(typ) = maybe_typ {
-                            assert_eq!(typ, VarType::U32);
+                            assert!(are_types_compatible(&typ, &VarType::U32));
                             typ
                         } else {
                             VarType::U32
@@ -451,10 +517,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     }
                     Dest::Local(local) => {
                         if let Some(typ) = maybe_typ {
-                            assert_eq!(typ, local.typ);
+                            assert!(are_types_compatible(&typ, &local.typ));
                             typ
                         } else {
-                            local.typ
+                            local.typ.clone()
                         }
                     }
                 };
@@ -472,17 +538,17 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                             }
                             None => a_type,
                         },
-                        None => b_type.unwrap_or(result_typ),
+                        None => b_type.unwrap_or(result_typ.clone()),
                     }
                 } else {
-                    result_typ
+                    result_typ.clone()
                 };
                 self.scope(|cpu| {
-                    let lhs_local = cpu.locals.new_temp(arg_typ);
-                    cpu.eval_expr(&binop.args.0, Dest::Local(lhs_local));
-                    match arg_typ {
-                        VarType::U8 => {
-                            cpu.eval_expr(&binop.args.1, Dest::X);
+                    let lhs_local = cpu.locals.new_temp(&arg_typ);
+                    cpu.eval_expr(&binop.args.0, &Dest::Local(lhs_local.clone()));
+                    match &arg_typ {
+                        VarType::U8 | VarType::Bool => {
+                            cpu.eval_expr(&binop.args.1, &Dest::X);
                             cpu.goto_b_offset(lhs_local.location);
                             match binop.kind {
                                 BinOpKind::Plus => {
@@ -507,8 +573,8 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                                 }
                             }
                         }
-                        VarType::U32 => {
-                            cpu.eval_expr(&binop.args.1, Dest::A);
+                        VarType::U32 | VarType::PtrTo(_) => {
+                            cpu.eval_expr(&binop.args.1, &Dest::A);
                             cpu.goto_b_offset(lhs_local.location);
                             match binop.kind {
                                 BinOpKind::Plus => {
@@ -541,8 +607,8 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                         }
                     }
                 });
-                match result_typ {
-                    VarType::U8 => {
+                match &result_typ {
+                    VarType::U8 | VarType::Bool => {
                         match dest {
                             Dest::None => {}
                             Dest::X => {
@@ -556,7 +622,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                             }
                         }
                     }
-                    VarType::U32 => {
+                    VarType::U32 | VarType::PtrTo(_) => {
                         match dest {
                             Dest::None => {}
                             Dest::X => {
@@ -605,7 +671,7 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 });
             }
             Expr::IfElse(i) => {
-                self.eval_expr(&i.cond, Dest::X);
+                self.eval_expr(&i.cond, &Dest::X);
                 let start_b_offset = self.cur_b_offset;
                 let (true_entry_index, true_exit_index) = self.block(|cpu| {
                     cpu.eval_expr(&i.if_true, dest);
@@ -623,10 +689,70 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 self.out.arena.blocks[false_exit_index].next_block_index = Some(new_index);
             }
             Expr::StringLiteral(_) => {}
+            Expr::Deref(e) => {
+                self.eval_expr(e, &Dest::A);
+                self.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                self.out.add_op(SamLOp::Simple(SamSOp::CopyAToB));
+                match dest {
+                    Dest::None => {}
+                    Dest::X => {
+                        self.out.add_op(SamLOp::Simple(SamSOp::ReadXAtB));
+                        self.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                    }
+                    Dest::A => {
+                        self.out.add_op(SamLOp::Simple(SamSOp::ReadAAtB));
+                        self.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                    }
+                    Dest::Local(local) => match &local.typ {
+                        VarType::Unit => {}
+                        VarType::U8 | VarType::Bool => {
+                            self.out.add_op(SamLOp::Simple(SamSOp::ReadXAtB));
+                            self.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                            self.write_x_at(local);
+                        }
+                        VarType::U32 | VarType::PtrTo(_) => {
+                            self.out.add_op(SamLOp::Simple(SamSOp::ReadAAtB));
+                            self.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                            self.write_a_at(local);
+                        }
+                        VarType::StringLiteral => {}
+                    },
+                }
+            }
+            Expr::AddressOf(i) => {
+                let local = self.locals.get(i);
+                self.goto_b_offset(local.location);
+                self.out.add_op(SamLOp::Simple(SamSOp::CopyBToA));
+                match dest {
+                    Dest::None => {}
+                    Dest::X => {
+                        panic!("Reading address of {} into X?", i)
+                    }
+                    Dest::A => {
+                        // it's already in A
+                    }
+                    Dest::Local(local) => match &local.typ {
+                        VarType::Unit => {}
+                        VarType::U8 => {
+                            panic!("Writing address of {} into U8 local {}", i, local.name)
+                        }
+                        VarType::Bool => {
+                            panic!("Writing address of {} into bool local {}", i, local.name)
+                        }
+                        VarType::U32 => {
+                            self.write_a_at(local);
+                        }
+                        VarType::StringLiteral => {}
+                        VarType::PtrTo(_) => {
+                            self.write_a_at(local);
+                        }
+                    },
+                }
+            }
         }
     }
 
-    pub fn call(&mut self, fncall: &'a FnCall, dest: Dest<'a>) {
+    pub fn call(&mut self, fncall: &'a FnCall, dest: &Dest<'a>) {
         if fncall.fn_name == "print"
             || fncall.fn_name == "println"
             || fncall.fn_name == "print_char"
@@ -647,8 +773,12 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                         self.out.add_op(SamLOp::Simple(SamSOp::PrintCharX));
                     }
                 }
-                VarType::U8 => {
-                    self.eval_expr(arg, Dest::X);
+                VarType::U8 | VarType::Bool => {
+                    self.eval_expr(arg, &Dest::X);
+                    if let VarType::Bool = &typ {
+                        self.out.add_op(SamLOp::Simple(SamSOp::NotX));
+                        self.out.add_op(SamLOp::Simple(SamSOp::NotX));
+                    }
                     if fncall.fn_name == "print" {
                         self.out.add_op(SamLOp::Simple(SamSOp::MoveXToA));
                         self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
@@ -663,8 +793,8 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                         unimplemented!()
                     }
                 }
-                VarType::U32 => {
-                    self.eval_expr(arg, Dest::A);
+                VarType::U32 | VarType::PtrTo(_) => {
+                    self.eval_expr(arg, &Dest::A);
                     if fncall.fn_name == "print" {
                         self.out.add_op(SamLOp::Simple(SamSOp::PrintA));
                     } else if fncall.fn_name == "println" {
@@ -681,21 +811,43 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                     panic!("Printing unit");
                 }
             }
+        } else if fncall.fn_name == "read_char" {
+            self.out.add_op(SamLOp::Simple(SamSOp::StdinX));
+            match dest {
+                Dest::None => {}
+                Dest::X => {
+                    // it's already in X
+                }
+                Dest::A => {
+                    self.out.add_op(SamLOp::Simple(SamSOp::MoveXToA));
+                }
+                Dest::Local(local) => match &local.typ {
+                    VarType::Unit => {}
+                    VarType::U8 | VarType::Bool => {
+                        self.write_x_at(local);
+                    }
+                    VarType::U32 | VarType::PtrTo(_) => {
+                        self.out.add_op(SamLOp::Simple(SamSOp::StdinX));
+                        self.write_a_at(local);
+                    }
+                    VarType::StringLiteral => {}
+                },
+            }
         } else {
             let fn_decl = self
                 .fn_decls
                 .get(&fncall.fn_name)
-                .expect("Calling unknown function");
+                .expect(&format!("Calling unknown function {}", fncall.fn_name));
             assert_eq!(fn_decl.args.len(), fncall.args.len());
             let valret_local = self.scope(|cpu| {
-                let valret_local = cpu.locals.new_temp(fn_decl.ret);
+                let valret_local = cpu.locals.new_temp(&fn_decl.ret);
                 for (arg_expr, arg_decl) in fncall.args.iter().zip(fn_decl.args.iter()) {
-                    let arg_local = cpu.locals.new_temp(arg_decl.typ);
+                    let arg_local = cpu.locals.new_temp(&arg_decl.typ);
                     cpu.scope(|cpu| {
-                        cpu.eval_expr(arg_expr, Dest::Local(arg_local));
+                        cpu.eval_expr(arg_expr, &Dest::Local(arg_local));
                     });
                 }
-                let iret_local = cpu.locals.new_temp(VarType::U32);
+                let iret_local = cpu.locals.new_temp(&VarType::U32);
                 cpu.goto_b_offset(iret_local.location);
                 cpu.out.add_op(SamLOp::Call(fn_decl.name.clone()));
                 valret_local
@@ -703,10 +855,10 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             match dest {
                 Dest::None => {}
                 Dest::Local(dest_local) => {
-                    self.copy_local_to_local(valret_local, dest_local);
+                    self.copy_local_to_local(&valret_local, dest_local);
                 }
-                Dest::A => self.read_a_at(valret_local),
-                Dest::X => self.read_x_at(valret_local),
+                Dest::A => self.read_a_at(&valret_local),
+                Dest::X => self.read_x_at(&valret_local),
             }
         }
     }
@@ -714,27 +866,80 @@ impl<'a, 'o> SamCpu<'a, 'o> {
     pub fn exec_stmt(&mut self, stmt: &'a Stmt) {
         match stmt {
             Stmt::VarDecl(decl) => {
-                let local = self.locals.new_named(&decl.var_name, decl.typ);
-                self.eval_expr(&decl.init, Dest::Local(local));
+                let local = self.locals.new_named(&decl.var_name, &decl.typ);
+                self.eval_expr(&decl.init, &Dest::Local(local));
             }
-            Stmt::VarAssign(ass) => {
-                let local = *self.locals.get(&ass.var_name);
-                self.eval_expr(&ass.expr, Dest::Local(local));
-            }
+            Stmt::VarAssign(ass) => match &ass.lhs {
+                Expr::VarRef(s) => {
+                    let local = self.locals.get(&s);
+                    self.eval_expr(&ass.expr, &Dest::Local(local));
+                }
+                Expr::Deref(ptr_expr) => {
+                    let lhs_typ = self.get_expr_type(&Expr::Deref(ptr_expr.clone()));
+                    let rhs_typ = self.get_expr_type(&ass.expr);
+                    let typ = if let Some(lhs_typ) = lhs_typ {
+                        if let Some(rhs_typ) = rhs_typ {
+                            assert!(
+                                are_types_compatible(&lhs_typ, &rhs_typ),
+                                "assigning incompatible types {:?} and {:?}",
+                                &lhs_typ,
+                                &rhs_typ
+                            );
+                            lhs_typ.clone()
+                        } else {
+                            lhs_typ.clone()
+                        }
+                    } else {
+                        if let Some(rhs_typ) = rhs_typ {
+                            rhs_typ.clone()
+                        } else {
+                            panic!("Assigning to pointer of unknown type: {:?}", ass);
+                        }
+                    };
+                    self.scope(|cpu| {
+                        //let ptr_local = cpu.locals.new_temp(&VarType::PtrTo(Box::new(typ.clone())));
+                        let val_local = cpu.locals.new_temp(&typ);
+                        cpu.eval_expr(&ass.expr, &Dest::Local(val_local.clone()));
+                        cpu.eval_expr(ptr_expr, &Dest::A);
+                        match typ {
+                            VarType::Unit => {}
+                            VarType::U8 | VarType::Bool => {
+                                cpu.read_x_at(&val_local);
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::CopyAToB));
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::WriteXAtB));
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                            }
+                            VarType::U32 | VarType::PtrTo(_) => {
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::CopyAToB));
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                                // now B is restored, C contains the ptr
+                                cpu.read_a_at(&val_local);
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::WriteAAtB));
+                                cpu.out.add_op(SamLOp::Simple(SamSOp::SwapBAndC));
+                            }
+                            VarType::StringLiteral => {}
+                        }
+                    });
+                }
+                other => panic!("Invalid lhs {:?}", other),
+            },
             Stmt::Expr(e) => {
-                self.eval_expr(e, Dest::None);
+                self.eval_expr(e, &Dest::None);
             }
             Stmt::IfMaybeElse(i) => {
-                self.eval_expr(&i.cond, Dest::X);
+                self.eval_expr(&i.cond, &Dest::X);
                 let start_b_offset = self.cur_b_offset;
                 let (true_entry_index, true_exit_index) = self.block(|cpu| {
-                    cpu.eval_expr(&i.if_true, Dest::None);
+                    cpu.eval_expr(&i.if_true, &Dest::None);
                 });
                 let end_b_offset = self.cur_b_offset;
                 self.cur_b_offset = start_b_offset;
                 let (false_entry_index, false_exit_index) = self.block(|cpu| {
                     if let Some(if_false) = &i.if_false {
-                        cpu.eval_expr(if_false, Dest::None);
+                        cpu.eval_expr(if_false, &Dest::None);
                     }
                     cpu.goto_b_offset(end_b_offset);
                 });
@@ -747,11 +952,11 @@ impl<'a, 'o> SamCpu<'a, 'o> {
             Stmt::WhileLoop(w) => {
                 let start_b_offset = self.cur_b_offset;
                 let (inner_entry_index, inner_exit_index) = self.block(|cpu| {
-                    cpu.eval_expr(&w.inner, Dest::None);
+                    cpu.eval_expr(&w.inner, &Dest::None);
                     cpu.goto_b_offset(start_b_offset);
                 });
                 let (cond_entry_index, cond_exit_index) = self.block(|cpu| {
-                    cpu.eval_expr(&w.cond, Dest::X);
+                    cpu.eval_expr(&w.cond, &Dest::X);
                     cpu.goto_b_offset(start_b_offset);
                     cpu.out.add_op(SamLOp::JmpToBlockIfX(inner_entry_index));
                 });
@@ -761,7 +966,15 @@ impl<'a, 'o> SamCpu<'a, 'o> {
                 self.out.arena.blocks[cond_exit_index].next_block_index = Some(new_index);
             }
             Stmt::Return(s) => {
-                self.ret(Some(&s.expr));
+                if let Some(ret_expr) = &s.expr {
+                    if let Some(ret_expr_type) = self.get_expr_type(ret_expr) {
+                        assert!(are_types_compatible(&ret_expr_type, &self.valret_local.typ));
+                    }
+                    self.ret(Some(ret_expr));
+                } else {
+                    assert_eq!(&self.valret_local.typ, &VarType::Unit);
+                    self.ret(None);
+                }
             }
         }
     }

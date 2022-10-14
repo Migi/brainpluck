@@ -6,7 +6,173 @@ use std::collections::{HashMap, HashSet};
 use std::result;
 
 pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
-    fn goto_ptr(
+    fn goto_ptr_register(
+        cpu: &mut Cpu,
+        scratch_track: ScratchTrack,
+        ptr: Register,
+        cur_ptr: Register,
+        all_registers: Register,
+    ) {
+        let ([keep_going, cmp_result], scratch_track) = scratch_track.split_2();
+
+        let mut ptr = ptr;
+        let mut cur_ptr = cur_ptr;
+
+        // elements are (log256, log2)
+        //let shift_logs = [(1, 0), (0, 4), (0, 3), (0, 2), (0, 0)];
+        let shift_logs = [(1, 0)];
+
+        for (shift_by_log256, shift_by_log2) in shift_logs {
+            let shift_by = 1 << (shift_by_log256 * 8 + shift_by_log2);
+            cpu.comment(format!("shift_by_{}", shift_by));
+            cpu.inc_at(keep_going);
+            cpu.loop_while(keep_going, |cpu| {
+                cpu.comment("cmp_2_uint_binregisters");
+                if shift_by_log2 != 0 {
+                    assert!(ptr.size == 1);
+                    assert!(cur_ptr.size == 1);
+                    let ([a, b, rem], scratch_track) = scratch_track.split_3();
+                    cpu.div_u8_by_const(ptr.at(0), 1 << shift_by_log2, a, rem, scratch_track);
+                    cpu.div_u8_by_const(cur_ptr.at(0), 1 << shift_by_log2, b, rem, scratch_track);
+                    cpu.cmp_2_u8s(a, b, cmp_result, scratch_track);
+                    cpu.clr_at(a);
+                    cpu.clr_at(b);
+                    cpu.clr_at(rem);
+                } else {
+                    cpu.cmp_2_uint_registers(
+                        ptr.subview(0, ptr.size - shift_by_log256),
+                        cur_ptr.subview(0, cur_ptr.size - shift_by_log256),
+                        cmp_result,
+                        scratch_track,
+                    );
+                }
+
+                cpu.comment("match_cmp_result_lowscratch");
+                cpu.match_cmp_result_lowscratch(
+                    cmp_result,
+                    scratch_track,
+                    |cpu, scratch_track| {
+                        cpu.comment("dec_binregister");
+                        if shift_by_log2 != 0 {
+                            assert!(cur_ptr.size == 1);
+                            cpu.sub_const_from_byte(cur_ptr.at(0), 1 << shift_by_log2);
+                        } else {
+                            cpu.dec_register(
+                                cur_ptr.subview(0, cur_ptr.size - shift_by_log256),
+                                scratch_track,
+                            );
+                        }
+                        cpu.comment("shift_register_left_oob_by");
+                        cpu.shift_register_left_oob_by(all_registers, scratch_track, shift_by);
+                        let scratch_track_size =
+                            scratch_track.offset + scratch_track.dont_go_left_of.unwrap_or(0);
+                        if shift_by >= 2 {
+                            let counter = Pos {
+                                track: scratch_track.track.track_num,
+                                frame: -1,
+                            };
+                            cpu.add_const_to_byte(counter, scratch_track_size as u8);
+                            cpu.comment("move loop");
+                            cpu.loop_while(counter, |cpu| {
+                                cpu.dec();
+                                cpu.moveadd_byte(
+                                    counter.get_shifted(1),
+                                    counter.get_shifted(1 - shift_by),
+                                );
+                                cpu.moveadd_byte(counter, counter.get_shifted(1));
+                                cpu.goto(counter.get_shifted(1));
+                                cpu.now_were_actually_at(counter);
+                            });
+                            cpu.shift_frame_untracked(-scratch_track_size, false);
+                        } else {
+                            for i in 0..scratch_track_size {
+                                cpu.moveadd_byte(
+                                    Pos {
+                                        track: scratch_track.track.track_num,
+                                        frame: i,
+                                    },
+                                    Pos {
+                                        track: scratch_track.track.track_num,
+                                        frame: i - shift_by,
+                                    },
+                                );
+                            }
+                        }
+                        cpu.shift_frame_untracked(-shift_by, false);
+                    },
+                    |cpu, _| {
+                        cpu.dec_at(keep_going);
+                    },
+                    |cpu, scratch_track| {
+                        if shift_by_log2 != 0 {
+                            assert!(cur_ptr.size == 1);
+                            cpu.add_const_to_byte(cur_ptr.at(0), 1 << shift_by_log2);
+                        } else {
+                            cpu.inc_register(
+                                cur_ptr.subview(0, cur_ptr.size - shift_by_log256),
+                                scratch_track,
+                            );
+                        }
+                        cpu.shift_register_right_oob_by(all_registers, scratch_track, shift_by);
+                        let scratch_track_size =
+                            scratch_track.offset + scratch_track.dont_go_left_of.unwrap_or(0);
+                        if shift_by >= 2 {
+                            let counter = Pos {
+                                track: scratch_track.track.track_num,
+                                frame: scratch_track_size,
+                            };
+                            cpu.add_const_to_byte(counter, scratch_track_size as u8);
+                            cpu.loop_while(counter, |cpu| {
+                                cpu.dec();
+                                cpu.moveadd_byte(
+                                    counter.get_shifted(-1),
+                                    counter.get_shifted(-1 + shift_by),
+                                );
+                                cpu.moveadd_byte(counter, counter.get_shifted(-1));
+                                cpu.goto(counter.get_shifted(-1));
+                                cpu.now_were_actually_at(counter);
+                            });
+                            cpu.shift_frame_untracked(scratch_track_size, false);
+                        } else {
+                            for i in (0..scratch_track_size).rev() {
+                                cpu.moveadd_byte(
+                                    Pos {
+                                        track: scratch_track.track.track_num,
+                                        frame: i,
+                                    },
+                                    Pos {
+                                        track: scratch_track.track.track_num,
+                                        frame: i + shift_by,
+                                    },
+                                );
+                            }
+                        }
+                        cpu.shift_frame_untracked(shift_by, false);
+                    },
+                );
+                cpu.clr_at(cmp_result);
+            });
+            cpu.clr_at(cmp_result);
+
+            if shift_by_log256 > 0 {
+                ptr = ptr.subview(ptr.size - shift_by_log256, shift_by_log256);
+                cur_ptr = cur_ptr.subview(cur_ptr.size - shift_by_log256, shift_by_log256);
+            }
+        }
+
+        assert_eq!(ptr.size, 1);
+        assert_eq!(cur_ptr.size, 1);
+        let (ptr_unpacked, scratch_track) = scratch_track.split_binregister(8);
+        cpu.unpack_register(ptr, ptr_unpacked, scratch_track, false);
+        let (cur_ptr_unpacked, scratch_track) = scratch_track.split_binregister(8);
+        cpu.unpack_register(cur_ptr, cur_ptr_unpacked, scratch_track, false);
+        goto_ptr_binregister(cpu, scratch_track, ptr_unpacked, cur_ptr_unpacked, all_registers);
+        cpu.pack_binregister(cur_ptr_unpacked, cur_ptr, scratch_track, true);
+        cpu.clr_binregister(cur_ptr_unpacked, scratch_track);
+        cpu.clr_binregister(ptr_unpacked, scratch_track);
+    }
+
+    fn goto_ptr_binregister(
         cpu: &mut Cpu,
         scratch_track: ScratchTrack,
         ptr: BinRegister,
@@ -18,13 +184,14 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         let mut ptr = ptr;
         let mut cur_ptr = cur_ptr;
 
-        let shift_log2s = [8, 7, 6, 5, 4, 3, 2, 1, 0];
+        let shift_log2s = [7, 6, 5, 4, 3, 2, 1, 0];
 
         for shift_by_log2 in shift_log2s {
             let shift_by = 1 << shift_by_log2;
             cpu.comment(format!("shift_by_{}", shift_by));
             cpu.inc_at(keep_going);
             cpu.loop_while(keep_going, |cpu| {
+                cpu.comment("cmp_2_uint_binregisters");
                 cpu.cmp_2_uint_binregisters(
                     ptr.subview(0, ptr.size - shift_by_log2),
                     cur_ptr.subview(0, cur_ptr.size - shift_by_log2),
@@ -32,14 +199,17 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                     scratch_track,
                 );
 
+                cpu.comment("match_cmp_result_lowscratch");
                 cpu.match_cmp_result_lowscratch(
                     cmp_result,
                     scratch_track,
                     |cpu, scratch_track| {
+                        cpu.comment("dec_binregister");
                         cpu.dec_binregister(
                             cur_ptr.subview(0, cur_ptr.size - shift_by_log2),
                             scratch_track,
                         );
+                        cpu.comment("shift_register_left_oob_by");
                         cpu.shift_register_left_oob_by(all_registers, scratch_track, shift_by);
                         let scratch_track_size =
                             scratch_track.offset + scratch_track.dont_go_left_of.unwrap_or(0);
@@ -49,6 +219,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                                 frame: -1,
                             };
                             cpu.add_const_to_byte(counter, scratch_track_size as u8);
+                            cpu.comment("move loop");
                             cpu.loop_while(counter, |cpu| {
                                 cpu.dec();
                                 cpu.moveadd_byte(
@@ -145,31 +316,34 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
     let mut cfg = CpuConfig::new();
     let mut register_builder = cfg.build_register_track(TrackId::Register1);
     let a = register_builder.add_register(4);
-    let b = register_builder.add_binregister(32);
+    let b = register_builder.add_register(4);
+    let c = register_builder.add_register(4);
     let x = register_builder.add_register(1);
-    let iptr = register_builder.add_binregister(32);
-    let cur_ptr = register_builder.add_binregister(32);
+    let iptr = register_builder.add_register(4);
+    let cur_ptr = register_builder.add_register(4);
     let scratch_track = cfg.add_scratch_track(TrackId::Scratch1);
     let data_track = cfg.add_data_track(TrackId::Stack);
 
     match cfg.tracks.get_mut(&TrackId::Register1).unwrap() {
-        TrackKind::MultipleRegisters(_, ref mut register_map, ref mut binregister_map) => {
+        TrackKind::MultipleRegisters(_, ref mut register_map, ref mut _binregister_map) => {
             register_map.insert("a".to_owned(), a);
             register_map.insert("x".to_owned(), x);
-            binregister_map.insert("b".to_owned(), b);
-            binregister_map.insert("iptr".to_owned(), iptr);
-            binregister_map.insert("cur_ptr".to_owned(), cur_ptr);
+            register_map.insert("c".to_owned(), c);
+            register_map.insert("b".to_owned(), b);
+            register_map.insert("iptr".to_owned(), iptr);
+            register_map.insert("cur_ptr".to_owned(), cur_ptr);
         }
         _ => unreachable!(),
     }
 
     let print_debug_messages = false;
+    let print_comments = true;
 
     let mut cpu = Cpu::new(&cfg);
 
     let all_registers = Register {
         track: a.track,
-        size: a.size + b.size + x.size + iptr.size + cur_ptr.size,
+        size: a.size + b.size + c.size + x.size + iptr.size + cur_ptr.size,
         offset: a.offset,
     };
 
@@ -179,8 +353,8 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         cpu.add_const_to_byte(data_track.at(i as isize), val);
     }
 
-    cpu.set_binregister(iptr, initial_instr_ptr, scratch_track);
-    cpu.set_binregister(b, initial_b, scratch_track);
+    cpu.set_register(iptr, initial_instr_ptr);
+    cpu.set_register(b, initial_b);
 
     let (not_halted, scratch_track) = scratch_track.split_1();
     cpu.inc_at(not_halted);
@@ -205,8 +379,10 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
     should_goto_b_instr_set.insert(OPCODE_SET_X_TO_U8_AT_B_MOD_X);
     should_goto_b_instr_set.insert(OPCODE_SET_A_TO_U32_AT_B_MOD_A);
 
+    cpu.comment("Main loop");
+
     cpu.loop_while(not_halted, |cpu| {
-        goto_ptr(cpu, scratch_track, iptr, cur_ptr, all_registers);
+        goto_ptr_register(cpu, scratch_track, iptr, cur_ptr, all_registers);
         let (should_goto_b, scratch_track) = scratch_track.split_1();
         {
             let (deccing_instr_cpy, scratch_track) = scratch_track.split_1();
@@ -243,6 +419,8 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                     );
                 }
             }
+
+            cpu.comment("Calculate if we should go to b");
             process_should_goto_b_rec(
                 cpu,
                 scratch_track,
@@ -253,6 +431,8 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             );
             cpu.clr_at(deccing_instr_cpy);
         }
+
+        cpu.comment("Copy instruction data");
         let (instr_cpy, scratch_track) = scratch_track.split_1();
         cpu.copy_byte_autoscratch(data_track.at(0), instr_cpy, scratch_track);
         let (instr_data, scratch_track) = scratch_track.split_register(4);
@@ -262,9 +442,11 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             scratch_track,
             false,
         );
+
+        cpu.comment("Go to b (if needed)");
         cpu.if_nonzero(should_goto_b, scratch_track, |cpu, scratch_track| {
             cpu.dec_at(should_goto_b);
-            goto_ptr(cpu, scratch_track, b, cur_ptr, all_registers);
+            goto_ptr_register(cpu, scratch_track, b, cur_ptr, all_registers);
         });
 
         let atb_1 = data_track.view_register_at(0, 1);
@@ -279,6 +461,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: Halt");
             }
+            if print_comments {
+                cpu.comment("Halt");
+            }
             cpu.clr_at(not_halted);
         });
         cur_instr_num += 1;
@@ -288,6 +473,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_SET_X);
             if print_debug_messages {
                 cpu.debug_message("Instruction: SetX");
+            }
+            if print_comments {
+                cpu.comment("SetX");
             }
             cpu.add_const_to_byte(inc_iptr_by, 2);
 
@@ -301,6 +489,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: SetA");
             }
+            if print_comments {
+                cpu.comment("SetA");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 5);
 
             cpu.copy_register(instr_data, a, scratch_track, true);
@@ -312,6 +503,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_READ_A_AT_B);
             if print_debug_messages {
                 cpu.debug_message("Instruction: ReadAAtB");
+            }
+            if print_comments {
+                cpu.comment("ReadAAtB");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -325,6 +519,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: ReadXAtB");
             }
+            if print_comments {
+                cpu.comment("ReadXAtB");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             cpu.copy_register(atb_1, x, scratch_track, true);
@@ -336,6 +533,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_WRITE_A_AT_B);
             if print_debug_messages {
                 cpu.debug_message("Instruction: WriteAAtB");
+            }
+            if print_comments {
+                cpu.comment("WriteAAtB");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -349,6 +549,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: WriteXAtB");
             }
+            if print_comments {
+                cpu.comment("WriteXAtB");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             cpu.copy_register(x, atb_1, scratch_track, true);
@@ -360,6 +563,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_PRINT_CHAR_X);
             if print_debug_messages {
                 cpu.debug_message("Instruction: PrintCharX");
+            }
+            if print_comments {
+                cpu.comment("PrintCharX");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -374,6 +580,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: StdinX");
             }
+            if print_comments {
+                cpu.comment("StdinX");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             cpu.goto(x.at(0));
@@ -387,11 +596,18 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: AddConstToB");
             }
+            if print_comments {
+                cpu.comment("AddConstToB");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 5);
 
             let (val_unpacked, scratch_track) = scratch_track.split_binregister(32);
             cpu.unpack_register(instr_data, val_unpacked, scratch_track, false);
-            cpu.add_binregister_to_binregister(val_unpacked, b, scratch_track);
+            let (b_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            cpu.unpack_register(b, b_unpacked, scratch_track, false);
+            cpu.add_binregister_to_binregister(val_unpacked, b_unpacked, scratch_track);
+            cpu.pack_binregister(b_unpacked, b, scratch_track, true);
+            cpu.clr_binregister(b_unpacked, scratch_track);
             cpu.clr_binregister(val_unpacked, scratch_track);
         });
         cur_instr_num += 1;
@@ -402,11 +618,18 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: SubConstFromB");
             }
+            if print_comments {
+                cpu.comment("SubConstFromB");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 5);
 
             let (val_unpacked, scratch_track) = scratch_track.split_binregister(32);
             cpu.unpack_register(instr_data, val_unpacked, scratch_track, false);
-            cpu.sub_binregister_from_binregister(val_unpacked, b, scratch_track);
+            let (b_unpacked, scratch_track) = scratch_track.split_binregister(32);
+            cpu.unpack_register(b, b_unpacked, scratch_track, false);
+            cpu.sub_binregister_from_binregister(val_unpacked, b_unpacked, scratch_track);
+            cpu.pack_binregister(b_unpacked, b, scratch_track, true);
+            cpu.clr_binregister(b_unpacked, scratch_track);
             cpu.clr_binregister(val_unpacked, scratch_track);
         });
         cur_instr_num += 1;
@@ -416,6 +639,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_PRINT_A);
             if print_debug_messages {
                 cpu.debug_message("Instruction: PrintA");
+            }
+            if print_comments {
+                cpu.comment("PrintA");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -434,6 +660,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: Call");
             }
+            if print_comments {
+                cpu.comment("Call");
+            }
 
             // inc instr_ptr by 5
             {
@@ -441,13 +670,12 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
                 cpu.add_const_to_byte(counter, 5);
                 cpu.loop_while(counter, |cpu| {
                     cpu.dec();
-                    cpu.inc_binregister(iptr, scratch_track);
+                    cpu.inc_register(iptr, scratch_track);
                 });
             }
 
-            cpu.pack_binregister(iptr, atb_4, scratch_track, true);
-
-            cpu.unpack_register(instr_data, iptr, scratch_track, true);
+            cpu.copy_register(iptr, atb_4, scratch_track, true);
+            cpu.copy_register(instr_data, iptr, scratch_track, true);
         });
         cur_instr_num += 1;
         cpu.dec_at(instr_cpy);
@@ -457,8 +685,11 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: Ret");
             }
+            if print_comments {
+                cpu.comment("Ret");
+            }
 
-            cpu.unpack_register(atb_4, iptr, scratch_track, true);
+            cpu.copy_register(atb_4, iptr, scratch_track, true);
         });
         cur_instr_num += 1;
         cpu.dec_at(instr_cpy);
@@ -468,11 +699,11 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: Jump");
             }
+            if print_comments {
+                cpu.comment("Jump");
+            }
 
-            let (val_unpacked, scratch_track) = scratch_track.split_binregister(32);
-            cpu.unpack_register(instr_data, val_unpacked, scratch_track, false);
-            cpu.add_binregister_to_binregister(val_unpacked, iptr, scratch_track);
-            cpu.clr_binregister(val_unpacked, scratch_track);
+            cpu.add_register_to_register(instr_data, iptr, scratch_track);
         });
         cur_instr_num += 1;
         cpu.dec_at(instr_cpy);
@@ -482,15 +713,15 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: JumpIfX");
             }
+            if print_comments {
+                cpu.comment("JumpIfX");
+            }
 
             cpu.if_nonzero_else(
                 x.at(0),
                 scratch_track,
                 |cpu, scratch_track| {
-                    let (val_unpacked, scratch_track) = scratch_track.split_binregister(32);
-                    cpu.unpack_register(instr_data, val_unpacked, scratch_track, false);
-                    cpu.add_binregister_to_binregister(val_unpacked, iptr, scratch_track);
-                    cpu.clr_binregister(val_unpacked, scratch_track);
+                    cpu.add_register_to_register(instr_data, iptr, scratch_track);
                 },
                 |cpu, _| {
                     cpu.add_const_to_byte(inc_iptr_by, 5);
@@ -505,6 +736,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: AddU8AtBToX");
             }
+            if print_comments {
+                cpu.comment("AddU8AtBToX");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             cpu.copy_byte_autoscratch(data_track.at(0), x.at(0), scratch_track);
@@ -516,6 +750,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_MUL_U8_AT_B_TO_X);
             if print_debug_messages {
                 cpu.debug_message("Instruction: MulU8AtBToX");
+            }
+            if print_comments {
+                cpu.comment("MulU8AtBToX");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -540,6 +777,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: AddU32AtBToA");
             }
+            if print_comments {
+                cpu.comment("AddU32AtBToA");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             let (a_unpacked, scratch_track) = scratch_track.split_binregister(32);
@@ -560,6 +800,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_MUL_U32_AT_B_TO_A);
             if print_debug_messages {
                 cpu.debug_message("Instruction: MulU32AtBToA");
+            }
+            if print_comments {
+                cpu.comment("MulU32AtBToA");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -584,6 +827,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: NegA");
             }
+            if print_comments {
+                cpu.comment("NegA");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             let (a_unpacked, scratch_track) = scratch_track.split_binregister(32);
@@ -604,6 +850,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: NegX");
             }
+            if print_comments {
+                cpu.comment("NegX");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             let (x_cpy, _) = scratch_track.split_1();
@@ -621,6 +870,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: MoveXToA");
             }
+            if print_comments {
+                cpu.comment("MoveXToA");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             cpu.clr_register(a, scratch_track);
@@ -634,6 +886,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: NotX");
             }
+            if print_comments {
+                cpu.comment("NotX");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             cpu.not(x.at(0), scratch_track);
@@ -646,6 +901,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: AddConstToX");
             }
+            if print_comments {
+                cpu.comment("AddConstToX");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 2);
 
             cpu.copy_register(instr_data.subview(0, 1), x, scratch_track, false);
@@ -657,6 +915,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_CMP_U8_AT_B_WITH_X);
             if print_debug_messages {
                 cpu.debug_message("Instruction: CmpU8AtBWithX");
+            }
+            if print_comments {
+                cpu.comment("CmpU8AtBWithX");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -674,6 +935,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_CMP_U32_AT_B_WITH_A);
             if print_debug_messages {
                 cpu.debug_message("Instruction: CmpU32AtBWithA");
+            }
+            if print_comments {
+                cpu.comment("CmpU32AtBWithA");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -698,6 +962,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: SetXToU8AtBDivByX");
             }
+            if print_comments {
+                cpu.comment("SetXToU8AtBDivByX");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             let ([div, rem], scratch_track) = scratch_track.split_2();
@@ -713,6 +980,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_SET_A_TO_U32_AT_B_DIV_BY_A);
             if print_debug_messages {
                 cpu.debug_message("Instruction: SetAToU32AtBDivByA");
+            }
+            if print_comments {
+                cpu.comment("SetAToU32AtBDivByA");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -746,6 +1016,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             if print_debug_messages {
                 cpu.debug_message("Instruction: SetXToU8AtBModX");
             }
+            if print_comments {
+                cpu.comment("SetXToU8AtBModX");
+            }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
             let ([div, rem], scratch_track) = scratch_track.split_2();
@@ -761,6 +1034,9 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
             assert_eq!(cur_instr_num, OPCODE_SET_A_TO_U32_AT_B_MOD_A);
             if print_debug_messages {
                 cpu.debug_message("Instruction: SetAToU32AtBModA");
+            }
+            if print_comments {
+                cpu.comment("SetAToU32AtBModA");
             }
             cpu.add_const_to_byte(inc_iptr_by, 1);
 
@@ -789,6 +1065,55 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
         cur_instr_num += 1;
         cpu.dec_at(instr_cpy);
 
+        cpu.if_zero(instr_cpy, scratch_track, |cpu, scratch_track| {
+            assert_eq!(cur_instr_num, OPCODE_COPY_A_TO_B);
+            if print_debug_messages {
+                cpu.debug_message("Instruction: CopyAToB");
+            }
+            if print_comments {
+                cpu.comment("CopyAToB");
+            }
+            cpu.add_const_to_byte(inc_iptr_by, 1);
+
+            cpu.copy_register(a, b, scratch_track, true);
+        });
+        cur_instr_num += 1;
+        cpu.dec_at(instr_cpy);
+
+        cpu.if_zero(instr_cpy, scratch_track, |cpu, scratch_track| {
+            assert_eq!(cur_instr_num, OPCODE_COPY_B_TO_A);
+            if print_debug_messages {
+                cpu.debug_message("Instruction: CopyBToA");
+            }
+            if print_comments {
+                cpu.comment("CopyBToA");
+            }
+            cpu.add_const_to_byte(inc_iptr_by, 1);
+
+            cpu.copy_register(b, a, scratch_track, true);
+        });
+        cur_instr_num += 1;
+        cpu.dec_at(instr_cpy);
+
+        cpu.if_zero(instr_cpy, scratch_track, |cpu, scratch_track| {
+            assert_eq!(cur_instr_num, OPCODE_SWAP_B_AND_C);
+            if print_debug_messages {
+                cpu.debug_message("Instruction: SwapBAndC");
+            }
+            if print_comments {
+                cpu.comment("SwapBAndC");
+            }
+            cpu.add_const_to_byte(inc_iptr_by, 1);
+
+            let (c_cpy, scratch_track) = scratch_track.split_register(c.size);
+            cpu.copy_register(c, c_cpy, scratch_track, false);
+            cpu.copy_register(b, c, scratch_track, true);
+            cpu.copy_register(c_cpy, b, scratch_track, true);
+            cpu.clr_register(c_cpy, scratch_track);
+        });
+        cur_instr_num += 1;
+        cpu.dec_at(instr_cpy);
+
         assert_eq!(cur_instr_num, NUM_OPCODES);
 
         cpu.check_scratch(scratch_track, "At finish of instruction");
@@ -801,7 +1126,7 @@ pub fn sam2lir(prog: CompiledSamProgram) -> (Vec<Lir>, CpuConfig) {
 
         cpu.loop_while(inc_iptr_by, |cpu| {
             cpu.dec();
-            cpu.inc_binregister(iptr, scratch_track);
+            cpu.inc_register(iptr, scratch_track);
         });
 
         cpu.clr_at(instr_cpy);

@@ -192,6 +192,9 @@ pub fn link_sam_fns(fns: BTreeMap<String, SamFn>) -> CompiledSamProgram {
                     SamSOp::SetAToU32AtBDivByA => format!("SetAToU32AtBDivByA"),
                     SamSOp::SetXToU8AtBModX => format!("SetXToU8AtBModX"),
                     SamSOp::SetAToU32AtBModA => format!("SetAToU32AtBModA"),
+                    SamSOp::CopyAToB => format!("CopyAToB"),
+                    SamSOp::CopyBToA => format!("CopyBToA"),
+                    SamSOp::SwapBAndC => format!("SwapBAndC"),
                 },
                 SamFnOp::Call(called_f_name) => {
                     format!("call \"{}\"", called_f_name)
