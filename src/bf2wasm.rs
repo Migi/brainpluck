@@ -122,30 +122,47 @@ pub fn bf2wasm(bf_ops: Vec<BfOp>, optimize_first: bool) -> wat::Result<Vec<u8>> 
         bf_wat: &mut String,
         global_loop_counter: &mut usize,
     ) {
+        let mut cur_shift = 0;
+        let assure_nonnegative_offsets = |bf_wat: &mut String, cur_shift: &mut i16, added_shifts: &[i16]| {
+            let min_shift = added_shifts.iter().cloned().min().unwrap();
+            if *cur_shift + min_shift < 0 {
+                *bf_wat += &format!("(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const {})))", *cur_shift + min_shift);
+                *cur_shift = -min_shift;
+            }
+        };
         for op in bf_ops {
             match op {
                 BfOp::Inc => {
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.add (i32.load8_u (local.get $cell_ptr)) (i32.const 1)))\n";
+                    assure_nonnegative_offsets(bf_wat, &mut cur_shift, &[0]);
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (i32.const 1)))\n", cur_shift, cur_shift);
                 }
                 BfOp::Dec => {
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.add (i32.load8_u (local.get $cell_ptr)) (i32.const -1)))\n";
+                    assure_nonnegative_offsets(bf_wat, &mut cur_shift, &[0]);
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (i32.const -1)))\n", cur_shift, cur_shift);
                 }
                 BfOp::Right => {
-                    *bf_wat +=
-                        "(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const 1)))\n";
+                    cur_shift += 1;
                 }
                 BfOp::Left => {
-                    *bf_wat +=
-                        "(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const -1)))\n";
+                    cur_shift -= 1;
                 }
                 BfOp::In => {
                     //*bf_wat += "(i32.store8 (local.get $cell_ptr) (call $read_input_byte))\n";
                     panic!("Encountered In in sync ops!")
                 }
                 BfOp::Out => {
+                    if cur_shift != 0 {
+                        *bf_wat += &format!("(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const {})))", cur_shift);
+                        cur_shift = 0;
+                    }
+                    *bf_wat += "(global.set $cell_ptr_global (local.get $cell_ptr))";
                     *bf_wat += "(call $write_output_byte (i32.load8_u (local.get $cell_ptr)))\n";
                 }
                 BfOp::Loop(ops) => {
+                    if cur_shift != 0 {
+                        *bf_wat += &format!("(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const {})))", cur_shift);
+                        cur_shift = 0;
+                    }
                     let cur_loop_id = format!("bf_loop_{}", global_loop_counter);
                     let cur_block_id = format!("bf_loop_block_{}", global_loop_counter);
                     *global_loop_counter += 1;
@@ -161,67 +178,57 @@ pub fn bf2wasm(bf_ops: Vec<BfOp>, optimize_first: bool) -> wat::Result<Vec<u8>> 
                     *bf_wat += ")\n";
                 }
                 BfOp::Clr => {
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.const 0))\n";
+                    assure_nonnegative_offsets(bf_wat, &mut cur_shift, &[0]);
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.const 0))\n", cur_shift);
                 }
                 BfOp::Shift(shift) => {
-                    *bf_wat += &format!(
-                        "(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const {})))\n",
-                        shift
-                    );
+                    cur_shift += shift;
                 }
                 BfOp::Add(val) => {
-                    *bf_wat += &format!("(i32.store8 (local.get $cell_ptr) (i32.add (i32.load8_u (local.get $cell_ptr)) (i32.const {})))\n", val);
+                    assure_nonnegative_offsets(bf_wat, &mut cur_shift, &[0]);
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (i32.const {})))\n", cur_shift, cur_shift, val);
                 }
                 BfOp::MoveAdd(shift) => {
-                    // read cell:
-                    *bf_wat += "(local.set $tmp1 (i32.load8_u (local.get $cell_ptr)))\n";
-                    // set cell to 0:
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.const 0))\n";
-                    // calculate new position:
-                    *bf_wat += &format!(
-                        "(local.set $tmp2 (i32.add (local.get $cell_ptr) (i32.const {})))\n",
-                        shift
-                    );
+                    assert_ne!(*shift, 0);
                     // add to new cell:
-                    *bf_wat += "(i32.store8 (local.get $tmp2) (i32.add (i32.load8_u (local.get $tmp2)) (local.get $tmp1)))\n";
+                    assure_nonnegative_offsets(bf_wat, &mut cur_shift, &[0, *shift]);
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (i32.load8_u offset={} (local.get $cell_ptr))))\n", cur_shift+shift, cur_shift+shift, cur_shift);
+                    // set cell to 0:
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.const 0))\n", cur_shift);
                 }
                 BfOp::MoveAdd2(shift1, shift2) => {
+                    assert_ne!(*shift1, 0);
+                    assert_ne!(*shift2, 0);
+                    assure_nonnegative_offsets(bf_wat, &mut cur_shift, &[0, *shift1, *shift2]);
                     // read cell:
-                    *bf_wat += "(local.set $tmp1 (i32.load8_u (local.get $cell_ptr)))\n";
-                    // set cell to 0:
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.const 0))\n";
+                    *bf_wat += &format!("(local.set $tmp1 (i32.load8_u offset={} (local.get $cell_ptr)))\n", cur_shift);
                     // add to cell 1:
-                    *bf_wat += &format!(
-                        "(local.set $tmp2 (i32.add (local.get $cell_ptr) (i32.const {})))\n",
-                        shift1
-                    );
-                    *bf_wat += "(i32.store8 (local.get $tmp2) (i32.add (i32.load8_u (local.get $tmp2)) (local.get $tmp1)))\n";
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (local.get $tmp1)))\n", cur_shift+shift1, cur_shift+shift1);
                     // add to cell 2:
-                    *bf_wat += &format!(
-                        "(local.set $tmp2 (i32.add (local.get $cell_ptr) (i32.const {})))\n",
-                        shift2
-                    );
-                    *bf_wat += "(i32.store8 (local.get $tmp2) (i32.add (i32.load8_u (local.get $tmp2)) (local.get $tmp1)))\n";
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (local.get $tmp1)))\n", cur_shift+shift2, cur_shift+shift2);
+                    // set cell to 0:
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.const 0))\n", cur_shift);
                 }
                 BfOp::MoveAddMul(shift_adds) => {
+                    let mut all_shifts_vec = vec![0];
+                    all_shifts_vec.extend(shift_adds.iter().map(|sa| sa.shift));
+                    assure_nonnegative_offsets(bf_wat, &mut cur_shift, &all_shifts_vec);
                     // read cell:
-                    *bf_wat += "(local.set $tmp1 (i32.load8_u (local.get $cell_ptr)))\n";
-                    // set cell to 0:
-                    *bf_wat += "(i32.store8 (local.get $cell_ptr) (i32.const 0))\n";
+                    *bf_wat += &format!("(local.set $tmp1 (i32.load8_u offset={} (local.get $cell_ptr)))\n", cur_shift);
                     for shift_add in shift_adds {
-                        *bf_wat += &format!(
-                            "(local.set $tmp2 (i32.add (local.get $cell_ptr) (i32.const {})))\n",
-                            shift_add.shift
-                        );
+                        assert_ne!(shift_add.shift, 0);
+                        assert_ne!(shift_add.add, 0);
                         let mul_expr = if shift_add.add == 1 {
-                            format!("(i32.add (i32.load8_u (local.get $tmp2)) (local.get $tmp1))")
+                            format!("(i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (local.get $tmp1))", cur_shift + shift_add.shift)
                         } else if shift_add.add == 255 {
-                            format!("(i32.sub (i32.load8_u (local.get $tmp2)) (local.get $tmp1))")
+                            format!("(i32.sub (i32.load8_u offset={} (local.get $cell_ptr)) (local.get $tmp1))", cur_shift + shift_add.shift)
                         } else {
-                            format!("(i32.add (i32.load8_u (local.get $tmp2)) (i32.mul (local.get $tmp1) (i32.const {})))", shift_add.add)
+                            format!("(i32.add (i32.load8_u offset={} (local.get $cell_ptr)) (i32.mul (local.get $tmp1) (i32.const {})))", cur_shift + shift_add.shift, shift_add.add)
                         };
-                        *bf_wat += &format!("(i32.store8 (local.get $tmp2) {})\n", mul_expr);
+                        *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) {})\n", cur_shift + shift_add.shift, mul_expr);
                     }
+                    // set cell to 0:
+                    *bf_wat += &format!("(i32.store8 offset={} (local.get $cell_ptr) (i32.const 0))\n", cur_shift);
                 }
                 BfOp::Comment(_) => {}
                 BfOp::DebugMessage(_) => {}
@@ -230,6 +237,9 @@ pub fn bf2wasm(bf_ops: Vec<BfOp>, optimize_first: bool) -> wat::Result<Vec<u8>> 
                 BfOp::PrintRegisters => {}
                 BfOp::CheckScratchIsEmptyFromHere(_) => {}
             }
+        }
+        if cur_shift != 0 {
+            *bf_wat += &format!("(local.set $cell_ptr (i32.add (local.get $cell_ptr) (i32.const {})))", cur_shift);
         }
     }
     fn process_async_ops_rec(
